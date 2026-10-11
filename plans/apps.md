@@ -13,20 +13,38 @@ Status: proposed design; no implementation or deployment yet.
 
 ## Home Screen
 
-Use a spacious, responsive grid of rounded-square icons with short names underneath, rather than dashboard cards full of technical details. Start with three columns on narrow phones and adapt to available space. Follow Jelly theme, spacing, motion, and accessibility conventions.
+Split Home into two sections: **Starred** at the top and **History** below. Frequently used apps stay prominent; one-off apps remain easy to revisit without filling the icon grid. Follow Jelly theme, spacing, motion, and accessibility conventions.
 
-Each tile has:
+### Starred
+
+Use a spacious, responsive grid of rounded-square icons with short names underneath, rather than dashboard cards full of technical details. Start with three columns on narrow phones and adapt to available space. Only starred apps appear in this grid, always above History. Order by `starredAt` descending (most recently starred first), with a stable ID tie-breaker. Opening an app updates its last-opened time but never its starred time or position in this grid; renames and health updates do not reshuffle favorites.
+
+### History
+
+Show unstarred apps as compact rows, one per app, ordered by `COALESCE(lastOpenedAt, createdAt)` descending, with a stable ID tie-breaker. Opening a historical app moves it to the top of History immediately. Newly created apps enter at the top using their creation time until first opened. Each row shows a small icon, app name, and relative last-opened time, or “Not opened yet.” This is a launcher history, not a log of every visit; starred apps are not duplicated here. Paginate/load more as the history grows.
+
+Record launches through Jelly's tile/row, viewer entry, and direct-launch actions; deduplicate a single navigation and do not count health checks, prefetches, iframe internal navigation, or deployments as visits. Direct bookmarks to an app outside Jelly are not tracked in v1. Record launch intent, not proof of successful rendering.
+
+### Shared controls and starring
+
+Both tiles and rows have:
 
 - App icon and name; a generated initial/color fallback until an icon is supplied.
 - An understated status indicator only when stopped, starting, or unhealthy.
+- An accessible **Star/Unstar** toggle, separate from the launch target, usable by touch and keyboard without opening the app. Expose the toggle state with `aria-pressed` and keep action targets at least 44px.
 - A separate accessible overflow action for **Details**, **Open in new tab**, **Edit with agent**, **Start/Stop/Restart**, and **Remove from Apps**.
-- Stable alphabetical ordering for v1; do not reshuffle tiles on every visit or health update.
+
+New apps are unstarred by default. Starring sets `starredAt` and moves an app to the front of the top grid immediately; unstarring clears `starredAt` and returns it to its chronological position in History without changing its last-opened time. Starring an already-starred app is idempotent and preserves its timestamp; unstarring and then starring again assigns a new timestamp. Preserve keyboard focus across the move and announce the changed state; restore the previous state and show a retryable error if saving fails. Persist stars server-side so they survive reloads and appear consistently across devices.
+
+Starring is an organizational preference, not a service-lifecycle policy: unstarred/one-off apps are not automatically stopped, deleted, or expired. Existing Stop/Uninstall/Remove controls remain explicit. Agents must not auto-star apps merely because they created or deployed them.
+
+If no apps are starred, show a compact “Star apps to keep them here” hint above History rather than an empty grid. If only starred apps exist, omit the empty History section.
 
 The header provides Apps/Agents navigation and **Build an app**. Keep search lightweight; no folders, marketplace, widgets, or drag-and-drop ordering in v1.
 
 Empty state: “Your apps live here. Ask Jelly to build something.” Build an app selects or creates an agent/project and opens a normal conversation with an app-building intent. It does not silently launch a model request.
 
-Details shows description, linked project/agent, local and Tailscale URLs, service state, health-check time, and sanitized diagnostics. Technical fields are secondary. An unavailable app remains in the grid with a useful recovery screen, not a blank browser error.
+Details shows description, linked project/agent, local and Tailscale URLs, service state, health-check time, and sanitized diagnostics. Technical fields are secondary. An unavailable app remains in its grid or history position with a useful recovery screen, not a blank browser error.
 
 Switching between Apps and Agents preserves chat drafts, selected project/agent, scroll position, unread counts, and active work. Removing or archiving the builder agent must not delete the app.
 
@@ -38,7 +56,7 @@ Switching between Apps and Agents preserves chat drafts, selected project/agent,
 
 - A small floating **Jelly home** pill sits at the top-left, with a visible home mark and a minimum 44px hit target.
 - It is rendered by Jelly, outside the iframe: the app cannot accidentally remove it or make it disappear during loading.
-- It returns explicitly to `/apps`, restores grid scroll, and focuses the originating tile. Do not implement this as `history.back()`: the app may have navigated many times.
+- It returns explicitly to `/apps`, restores Home scroll, and focuses the originating tile or history row by app ID, even if its position changed. Do not implement this as `history.back()`: the app may have navigated many times.
 - Keep it lightly styled but discoverable. Never require a hover, swipe, long press, or undocumented keyboard shortcut.
 - Respect safe-area insets. Reserve a small corner clearance in generated apps; provide a configurable alternate corner for apps whose controls conflict.
 - An adjacent compact menu offers app details and **Open in new tab**. No chat composer overlays the app.
@@ -70,8 +88,10 @@ launchMode: embedded | direct
 runtimePort?, gatewayPort?, unitName?, deploymentRevision?
 executable?, args?, healthPath?
 localOrigin?, tailnetOrigin?, allowedJellyOrigins
-desiredState, createdAt, updatedAt
+desiredState, starredAt?, lastOpenedAt?, createdAt, updatedAt
 ```
+
+Star preferences are instance-scoped in v1, matching Jelly's current single-user model; a future multi-user version should separate per-user stars and visit history. Add explicit star-setting and launch-recording API operations (not a non-idempotent toggle endpoint), with server timestamps and events for cross-device updates. Derive star state from a non-null `starredAt`; metadata edits and redeployments must preserve both `starredAt` and `lastOpenedAt`. Search spans both sections while retaining starred-first grouping.
 
 Ports, generated unit names, and canonical managed origins are server-controlled. Store secret references separately, never secret values in registry/API responses. Runtime observations (service state, HTTP health, Tailscale reachability, last error) are distinct from desired state and include timestamps.
 
@@ -134,7 +154,8 @@ Add concise instance-level instructions for every agent, not only a particular p
 Extend `instance_info` with the Apps Home URL and supported deployment/network capabilities. Provide structured tools backed by the same service layer as the UI:
 
 - `apps_list` / `apps_get`: registry, ownership, status, URLs, and capabilities.
-- `apps_register`: create/update metadata or link an existing private app.
+- `apps_register`: create/update metadata or link an existing private app; preserve stars and visit history on updates.
+- `apps_set_starred`: set a specified star state when the user asks to star or unstar an app; never infer it from deployment.
 - `apps_deploy`: validate manifest, allocate resources, activate a release, and verify health.
 - `apps_control`: start/stop/restart a Jelly-owned app.
 - `apps_logs`: bounded diagnostics with best-effort redaction; warn app authors never to log secrets.
@@ -159,7 +180,7 @@ Current anchors:
 ## Delivery sequence
 
 1. **Compatibility/security spike**: prove isolated gateway cookies, iframe permissions, WebSockets, direct OAuth fallback, and mobile viewer behavior with disposable fixture apps. Resolve hostname/HTTPS requirements before committing to networking.
-2. **Registry and Home**: migration, metadata APIs, linked apps, grid, Apps/Agents navigation, details, deep links, and unavailable states.
+2. **Registry and Home**: migration, metadata APIs, linked apps, starred icon grid, chronological unstarred history, persistent star/launch APIs, Apps/Agents navigation, details, deep links, and unavailable states.
 3. **Managed deployment**: port allocation, generated user units, gateway, health observation, lifecycle operations, partial-failure cleanup, and last-good-release rollback.
 4. **Agent integration**: capabilities, tools, instructions, template, Build an app/Edit with agent flows, and useful chat results.
 5. **Hardening and activation**: automated checks plus real local/Tailscale and reboot validation. Document limitations before rollout.
@@ -169,6 +190,10 @@ Current anchors:
 - Ask an agent to build an app; it appears on Apps only after explicit registration/deployment, opens on desktop and phone, and has a working home control.
 - Home navigation survives app crashes, loading failures, internal navigation, reloads, direct bookmarks, and unavailable Tailscale.
 - Apps/Agents navigation does not lose drafts, project scope, scroll position, or active conversations.
+- New apps enter History unstarred. Starred apps appear only in the top icon grid, ordered by `starredAt` descending; opening or renaming them never changes that order. Unstarred apps appear only in History, ordered by `COALESCE(lastOpenedAt, createdAt)` descending; opening a historical app immediately moves it to the top.
+- Star/unstar works with touch and keyboard, preserves focus, survives reload/restart, syncs across devices, and rolls back visibly on save failure. Redeployment and metadata changes never reset stars or visit times.
+- Launches update History once per navigation; health checks and internal app navigation do not reorder it. Unstarring restores chronological placement without inventing a visit. Empty-section states and history pagination work.
+- Unstarring or leaving a one-off app unused does not stop its service or delete its data.
 - App services survive agent completion, Jelly restart, and host reboot; starting/stopping one does not affect another.
 - Concurrent deployments cannot claim the same ports or overwrite another app's unit. Failed deployment retains the last healthy version where feasible.
 - Unregistering, uninstalling, and deleting data have different, tested effects.

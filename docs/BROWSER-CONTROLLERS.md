@@ -1,5 +1,10 @@
 # Browser controllers
 
+These controllers apply only to **Managed browser**, which remains the default
+browser target. The additional experimental **Connected Chrome** target uses a
+separate extension/native-host path, not these controllers or VNC. See
+[Connected Chrome setup and limitations](CONNECTED-CHROME.md).
+
 Settings → Browser controller selects **Playwright** or **AgentBrowser** globally.
 New and upgraded installations default to AgentBrowser. The choice is saved in
 SQLite, not browser local storage. An already allocated agent browser session

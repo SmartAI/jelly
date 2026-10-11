@@ -19,6 +19,9 @@ import { Harness } from "./harness";
 import { HttpError } from "./errors";
 export { HttpError } from "./errors";
 import { ComputerSessions } from "./computer-sessions";
+import { BrowserSessions } from "./browser-sessions";
+import { ChromeSessions } from "./chrome-sessions";
+import type { ChromeSelection } from "../shared/chrome-protocol";
 import { Interventions } from "./interventions";
 import { interventionTools } from "./agent-tools";
 import type { SudoExecutor } from "./sudo";
@@ -44,6 +47,8 @@ export class JellyService {
   private active = new Map<string, ActiveRun>();
   private closing = false;
   readonly computer: ComputerSessions;
+  readonly browsers: BrowserSessions;
+  readonly chrome: ChromeSessions;
   readonly interventions: Interventions;
   readonly subagents: SubagentStore;
   constructor(
@@ -57,6 +62,8 @@ export class JellyService {
       this.emit(id, null, "computer_changed", {}),
       () => store.instance().browserBackend,
     );
+    this.chrome = new ChromeSessions(harness.dataDir, store.instance().id, id => this.emit(id, null, "computer_changed", {}));
+    this.browsers = new BrowserSessions(this.computer, this.chrome);
     this.interventions = new Interventions(
       store,
       (agentId, runId, type, data) => {
@@ -135,7 +142,7 @@ export class JellyService {
       runs: page.runs,
       historyBefore: page.before,
       cursor: this.store.cursor(),
-      config: { ...this.harness.config(instance.mode, instance), browserBackend: instance.browserBackend },
+      config: { ...this.harness.config(instance.mode, instance), browserBackend: instance.browserBackend, ...this.store.browserSelection() },
       interventions: page.interventions,
       computer: this.computer.state(selected?.id ?? null, sessionId),
     };
@@ -280,7 +287,10 @@ export class JellyService {
   setMode(mode: Mode) {
     return this.setConfig({ mode });
   }
-  setConfig(input: { browserBackend?: BrowserBackend; agentId?: string; mode?: Mode; model?: ModelId; effort?: Effort }) {
+  setConfig(input: { browserBackend?: BrowserBackend; agentId?: string; mode?: Mode; model?: ModelId; effort?: Effort } & Partial<ChromeSelection>) {
+    const selection = { ...this.store.browserSelection(), ...Object.fromEntries(Object.entries(input).filter(([key, value]) => ["browserTarget", "chromeProfile", "chromeOrigins"].includes(key) && value !== undefined)) };
+    this.chrome.validate(selection);
+    if (input.agentId !== undefined && [input.browserTarget, input.chromeProfile, input.chromeOrigins].some(v => v !== undefined)) throw new HttpError(400, "Browser target is a global setting.");
     if (input.mode !== undefined && !["auto", "chatgpt", "api"].includes(input.mode))
       throw new HttpError(400, "Unknown connection mode.");
     if (input.browserBackend !== undefined && !["playwright", "agent-browser"].includes(input.browserBackend))
@@ -302,11 +312,12 @@ export class JellyService {
     const event = this.store.db.transaction(() => {
       this.store.setConfig(next.mode, next.model, next.effort);
       this.store.setBrowserBackend(next.browserBackend);
+      this.store.setBrowserSelection(selection);
       if (agent && switching) this.store.setAgentConfig(agent.id, next.model, next.effort);
       return this.store.event(null, null, "config_changed", { ...next, agentId: agent?.id ?? null });
     })();
     this.notify(event);
-    return { ...this.harness.config(next.mode, next), browserBackend: next.browserBackend };
+    return { ...this.harness.config(next.mode, next), browserBackend: next.browserBackend, ...selection };
   }
   freshSession(agentId: string, requestId: string) {
     if (this.closing) throw new HttpError(503, "Jelly is shutting down.");
@@ -449,6 +460,7 @@ export class JellyService {
     const agentId = agent.id;
     const instance = this.store.instance();
     const config = this.harness.config(instance.mode, agent);
+    const browserSelection = this.store.browserSelection();
     this.harness.requireConnection(config);
     const events: Activity[] = [];
     let nameAgent = false;
@@ -541,7 +553,7 @@ export class JellyService {
           config,
           instance,
           interventionTools(
-            this.computer,
+            this.browsers.forRun(agentId, run.id, browserSelection, agent.name),
             this.interventions,
             agentId,
             run.id,
@@ -718,6 +730,7 @@ export class JellyService {
                 ? error.message
                 : "Could not stop subagent work";
           }
+        await this.chrome.settle(agentId, run.id);
         const status: RunRecord["status"] = state.cancelled
           ? "cancelled"
           : failure
@@ -807,6 +820,7 @@ export class JellyService {
     // Even if a stop handler fails, wait for every run before giving up ownership.
     const settled = await Promise.allSettled([this.settled()]);
     try {
+      await this.chrome.close();
       await this.computer.close();
     } finally {
       this.harness.chatgptTransport.close();

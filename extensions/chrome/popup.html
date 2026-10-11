@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Jelly Chrome</title>
+    <style>
+      body {
+        font: 16px system-ui;
+        width: 330px;
+        padding: 16px;
+      }
+      button {
+        min-height: 44px;
+        margin: 4px;
+      }
+      select {
+        width: 100%;
+        font-size: 16px;
+        min-height: 44px;
+      }
+      label {
+        display: block;
+        margin-top: 8px;
+      }
+      p {
+        overflow-wrap: anywhere;
+      }
+      li {
+        margin: 8px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Jelly · experimental</h2>
+    <p>
+      All task tabs share this profile’s accounts. Not a network sandbox. Use
+      disposable profiles until hardening is complete.
+    </p>
+    <p id="status" role="status"></p>
+    <ul id="tasks"></ul>
+    <fieldset>
+      <legend>Grant an existing tab</legend>
+      <p>
+        Explicitly grant one tab to one working task. Its group is preserved;
+        release never closes your tab.
+      </p>
+      <label
+        >Task
+        <select id="session"></select
+      ></label>
+      <label
+        >Your tab
+        <select id="tab"></select
+      ></label>
+      <button id="grant">Grant selected tab</button>
+    </fieldset>
+    <button id="connect">Connect to installed Jelly instance</button
+    ><button id="pause">Pause all agents locally</button
+    ><button id="disconnect">Disconnect</button>
+    <p>
+      Private sign-in: pause before entering credentials. Resume explicitly in
+      Jelly. No automatic reconnect or action replay.
+    </p>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

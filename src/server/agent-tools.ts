@@ -1,6 +1,6 @@
 import { Type, type TSchema } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { ComputerSessions } from "./computer-sessions";
+import type { BrowserPort } from "./browser-sessions";
 import type { Interventions } from "./interventions";
 import { resolve } from "node:path";
 const result = (value: unknown) => ({
@@ -10,7 +10,7 @@ const result = (value: unknown) => ({
 const define = <T extends TSchema>(tool: ToolDefinition<T>): ToolDefinition =>
   tool as ToolDefinition;
 export function interventionTools(
-  sessions: ComputerSessions,
+  sessions: { get(id: string): BrowserPort },
   requests: Interventions,
   agentId: string,
   runId: string,
@@ -56,7 +56,7 @@ export function interventionTools(
           "browser_login",
           agentId,
           runId,
-          args,
+          { ...args, browserTarget: browser.target ?? "managed" },
           signal,
         );
         void pending.promise.catch(() =>
@@ -71,6 +71,37 @@ export function interventionTools(
         } finally {
           browser.cancelLogin(pending.request.id);
         }
+      },
+    }),
+    define({
+      name: "browser_keep_tab",
+      label: "Keep Chrome deliverable",
+      description: "Keep the current Connected Chrome task tab after settlement: deliverable releases control; handoff retains a paused reservation for a follow-up run with explicit user resume. Unavailable for managed browsers.",
+      parameters: Type.Object({ mark: Type.Optional(Type.Union([Type.Literal("deliverable"), Type.Literal("handoff")])) }),
+      execute: async (_id, args) => {
+        const browser = computer();
+        if (browser.target !== "chrome" || !browser.keepTab) throw new Error("Deliverable marking is only available in Connected Chrome.");
+        return result(await browser.keepTab(args.mark));
+      },
+    }),
+    define({
+      name: "browser_name_task",
+      label: "Name Chrome task",
+      description: "Set a short non-sensitive task label on this agent's Connected Chrome groups. Never include credentials or personal details. Connected Chrome only.",
+      parameters: Type.Object({ name: Type.String({ minLength: 1, maxLength: 55 }) }),
+      execute: async (_id, args, signal) => {
+        if (computer().target !== "chrome") throw new Error("Task naming requires Connected Chrome.");
+        return result(await computer().action("name", args, signal));
+      },
+    }),
+    define({
+      name: "browser_select",
+      label: "Select Chrome option",
+      description: "Select an option value on an exact snapshot select-element reference. Connected Chrome only.",
+      parameters: Type.Object({ ref: Type.String(), value: Type.String({ maxLength: 1000 }) }),
+      execute: async (_id, args, signal) => {
+        if (computer().target !== "chrome") throw new Error("Referenced selection requires Connected Chrome.");
+        return result(await computer().action("select", args, signal));
       },
     }),
     define({
@@ -222,8 +253,8 @@ export function interventionTools(
       name: "browser_key",
       label: "Press browser key",
       description:
-        "Press a key or shortcut in this agent’s browser session, for example Enter, Tab, Control+l.",
-      parameters: Type.Object({ key: Type.String({ maxLength: 100 }) }),
+        "Managed browser: press a key or shortcut. Connected Chrome: requires an exact button/select reference and only Enter, Space, arrows or Escape; no global shortcuts or credential typing.",
+      parameters: Type.Object({ key: Type.String({ maxLength: 100 }), ref: Type.Optional(Type.String()) }),
       execute: async (_id, args, signal) =>
         result(await computer().action("key", args, signal)),
     }),

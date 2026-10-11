@@ -1,3 +1,4 @@
+import { defaultChromeSelection, type ChromeSelection } from "../shared/chrome-protocol";
 import { DEFAULT_AGENT_NAME } from "../shared/agent-names";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import { MODEL_OPTIONS, EFFORT_OPTIONS, type ModelId, type Effort } from "../shared/models";
@@ -176,6 +177,7 @@ export class Store {
     if (version < 12 && !(this.db.query("PRAGMA table_info(instance)").all() as { name: string }[]).some(column => column.name === "browserBackend"))
       this.db.exec("ALTER TABLE instance ADD COLUMN browserBackend TEXT NOT NULL DEFAULT 'agent-browser' CHECK(browserBackend IN ('playwright','agent-browser'));");
     if (version < 12) this.db.exec("PRAGMA user_version=12;");
+    this.db.exec("CREATE TABLE IF NOT EXISTS browser_selection (id INTEGER PRIMARY KEY CHECK(id=1), selection TEXT NOT NULL)");
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_timeline_assistant_message
       ON timeline(agentId, id) WHERE ${assistantMessageFilter}`);
     this.db.exec(`
@@ -293,6 +295,13 @@ export class Store {
       model: ModelId;
       effort: Effort;
     };
+  }
+  browserSelection(): ChromeSelection {
+    const row = this.db.query("SELECT selection FROM browser_selection WHERE id=1").get() as { selection: string } | null;
+    return row ? JSON.parse(row.selection) : defaultChromeSelection();
+  }
+  setBrowserSelection(selection: ChromeSelection) {
+    this.db.query("INSERT INTO browser_selection VALUES(1,?) ON CONFLICT(id) DO UPDATE SET selection=excluded.selection").run(JSON.stringify(selection));
   }
   setBrowserBackend(backend: BrowserBackend) {
     this.db.query("UPDATE instance SET browserBackend=?").run(backend);

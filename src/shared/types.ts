@@ -55,6 +55,9 @@ export interface Activity {
 }
 export type BrowserBackend = "playwright" | "agent-browser";
 export interface ConnectionConfig {
+  browserTarget?: "managed" | "chrome";
+  chromeProfile?: string;
+  chromeOrigins?: string[];
   browserBackend?: BrowserBackend;
   selectedModel: ModelId;
   effort: Effort;

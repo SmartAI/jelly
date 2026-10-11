@@ -251,13 +251,32 @@ export async function startApp(options: AppOptions) {
               if (!origin || !allowed.has(origin))
                 throw new HttpError(403, "A same-origin browser is required.");
               const session = controls.require(req, false);
-              const computer = service.computer.get(url.searchParams.get("agentId") ?? "");
+              const browserAgentId = url.searchParams.get("agentId") ?? "";
+              if (service.browsers.target(browserAgentId) === "chrome") throw new HttpError(409, "Connected Chrome has no VNC desktop.");
+              const computer = service.computer.get(browserAgentId);
               const connection = computer.consume(
                 url.searchParams.get("ticket") ?? "",
                 session.id,
               );
               if (server.upgrade(req, { data: { ...connection, computer } })) return;
               throw new HttpError(400, "WebSocket upgrade required.");
+            }
+            if (url.pathname === "/api/chrome" && req.method === "GET") {
+              controls.require(req, false);
+              return json(service.chrome.state(url.searchParams.get("agentId") ?? undefined));
+            }
+            if (url.pathname.startsWith("/api/chrome/") && req.method === "POST") {
+              controls.require(req);
+              const operation = url.pathname.slice("/api/chrome/".length);
+              const input = await body(req);
+              if (operation === "settings") return json(service.setConfig({ browserTarget: input.browserTarget as "managed" | "chrome", chromeProfile: input.chromeProfile as string, chromeOrigins: input.chromeOrigins as string[] }));
+              const agentId = text(input.agentId, "Agent ID", 100);
+              if (!store.agent(agentId)) throw new HttpError(404, "Agent not found.");
+              if (operation === "close" && ["running", "waiting"].includes(store.agent(agentId)!.status)) throw new HttpError(409, "Stop or finish the run before resetting its pinned browser target.");
+              const handoff = await service.chrome.control(agentId, operation, typeof input.pageId === "string" ? input.pageId : undefined);
+              if (operation === "close") service.browsers.releasePin(agentId);
+              if (handoff && store.intervention(handoff)?.status === "pending") service.interventions.completeLogin(handoff);
+              return json(service.chrome.state(agentId));
             }
             if (req.method === "GET" && url.pathname === "/api/computer") {
               const session = controls.require(req, false);
@@ -273,10 +292,12 @@ export async function startApp(options: AppOptions) {
               const session = controls.require(req),
                 action = url.pathname.slice("/api/computer/".length);
               const agentId = url.searchParams.get("agentId") ?? "";
+              if (service.browsers.target(agentId) === "chrome") throw new HttpError(409, "This session uses Connected Chrome, not the managed desktop. Use Chrome controls.");
               const computer = service.computer.get(agentId);
               if (action === "close") {
                 if (computer.state().control === "human") throw new HttpError(409, "Return human control before closing this session.");
                 await service.computer.closeSession(agentId);
+                service.browsers.releasePin(agentId);
                 return json(service.computer.state(agentId, session.id));
               }
               if (action === "start") {
@@ -324,7 +345,7 @@ export async function startApp(options: AppOptions) {
               const [, id, action] = intervention;
               if (action === "deny") {
                 const item = service.interventions.deny(id!);
-                if (item.kind === "browser_login")
+                if (item.kind === "browser_login" && item.payload.browserTarget !== "chrome")
                   service.computer.get(item.agentId).cancelLogin(id!);
                 return json({ ok: true });
               }
@@ -785,6 +806,7 @@ export async function startApp(options: AppOptions) {
       const failure = outcomes.find((outcome) => outcome.status === "rejected");
       if (failure?.status === "rejected") throw failure.reason;
     };
+    service.chrome.protectOrigins([server.url.origin, `http://localhost:${server.port}`, ...(options.allowedOrigins ?? [])]);
     service.computer.protectOrigins([
       server.url.origin,
       `http://localhost:${server.port}`,

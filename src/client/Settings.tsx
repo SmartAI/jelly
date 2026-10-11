@@ -2,6 +2,7 @@ import { useId, useState, type ReactNode } from "react";
 import { ChevronRight, Check } from "lucide-react";
 import { Modal } from "./Modal";
 import { Connections } from "./Connections";
+import { ChromeConnection } from "./ChromeConnection";
 import { McpConnections } from "./McpConnections";
 import { api } from "./api";
 import {
@@ -174,6 +175,7 @@ export function Settings({
         </button>
       }
     >
+      {page === "Browser target" && <ChromeConnection data={data} refresh={refresh} />}
       {page === "Browser controller" && (
         <>
           <Choices
@@ -197,6 +199,7 @@ export function Settings({
           <section className="settings-section">
             <h3>Browser</h3>
             <div className="settings-group">
+              <SettingsRow label="Browser target" value={data.config.browserTarget === "chrome" ? "Connected Chrome" : "Managed browser"} onClick={() => setPage("Browser target")} />
               <SettingsRow
                 label="Browser controller"
                 value={browserBackend === "playwright" ? "Playwright" : "AgentBrowser"}

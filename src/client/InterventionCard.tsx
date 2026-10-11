@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import {
   ShieldCheck,
   Monitor,
@@ -9,7 +9,8 @@ import {
   ChevronRight,
 } from "lucide-react";
 import type { Intervention } from "../shared/types";
-import { control } from "./api";
+import { api, control } from "./api";
+import type { ChromeStatus } from "./ChromeConnection";
 import { ChatFormCard, ChatFormActions } from "./ChatFormCard";
 export function InterventionCard({
   item,
@@ -35,6 +36,78 @@ export function InterventionCard({
   const status =
     item.status === "pending" ? (submitted ?? item.status) : item.status;
   const pending = status === "pending";
+  const connectedChrome = item.payload.browserTarget === "chrome";
+  const [chromeTask, setChromeTask] = useState<ChromeStatus["task"]>(null);
+  const [chromeUnavailable, setChromeUnavailable] = useState(false);
+  const chromeRevision = useRef(0);
+  const chromeControlling = useRef(false);
+  useEffect(() => {
+    if (!connectedChrome || !pending) return;
+    let disposed = false,
+      loading = false;
+    const load = async () => {
+      if (loading || chromeControlling.current) return;
+      loading = true;
+      const revision = ++chromeRevision.current;
+      try {
+        await api("/control-session");
+        const state = await api<ChromeStatus>(
+          `/chrome?agentId=${encodeURIComponent(item.agentId)}`,
+        );
+        if (!disposed && revision === chromeRevision.current) {
+          setChromeTask(state.task);
+          setChromeUnavailable(false);
+        }
+      } catch {
+        if (!disposed && revision === chromeRevision.current) {
+          setChromeTask(null);
+          setChromeUnavailable(true);
+        }
+      } finally {
+        loading = false;
+      }
+    };
+    void load();
+    const timer = setInterval(() => void load(), 1000);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [connectedChrome, pending, item.agentId, item.id]);
+  const chromeReady =
+    !busy &&
+    !!chromeTask?.connected &&
+    chromeTask.paused &&
+    chromeTask.pauseState === "paused" &&
+    chromeTask.handoff === item.id;
+  const chromeWarning =
+    chromeUnavailable || chromeTask?.connected === false
+      ? "Chrome disconnected or unavailable—do not enter credentials."
+      : chromeTask?.pauseState === "failed"
+        ? "Pause failed—do not enter credentials."
+        : chromeTask?.pauseState === "resuming"
+          ? "Resuming—do not enter credentials."
+          : "Pausing—do not enter credentials yet";
+  async function chromeControl(operation: "focus" | "resume") {
+    if (!chromeReady || chromeControlling.current) return;
+    chromeControlling.current = true;
+    ++chromeRevision.current;
+    setChromeTask(null);
+    setBusy(true);
+    setError("");
+    try {
+      await control(`/chrome/${operation}`, { agentId: item.agentId });
+      if (operation === "resume") setSubmitted("completed");
+      onChange();
+    } catch (e) {
+      setError((e as Error).message);
+      setChromeTask(null);
+      setChromeUnavailable(true);
+    } finally {
+      chromeControlling.current = false;
+      setBusy(false);
+    }
+  }
   async function act(approve: boolean, e?: FormEvent) {
     e?.preventDefault();
     setBusy(true);
@@ -106,7 +179,13 @@ export function InterventionCard({
       icon={
         item.kind === "sudo" ? <ShieldCheck size={22} /> : <Monitor size={22} />
       }
-      status={item.kind === "sudo" ? "Needs your approval" : "Private sign-in"}
+      status={
+        item.kind === "sudo"
+          ? "Needs your approval"
+          : connectedChrome && !chromeReady
+            ? "Preparing private sign-in"
+            : "Private sign-in"
+      }
       description={String(item.payload.reason ?? "")}
       error={error}
     >
@@ -183,8 +262,11 @@ export function InterventionCard({
             <dd>{String(item.payload.url)}</dd>
           </dl>
           <p className="chat-form-hint">
-            Sign in privately in this agent’s browser session, then return control to the
-            agent.
+            {connectedChrome
+              ? chromeReady
+                ? "Connected Chrome is paused and its debugger detached. Open the task tab in your actual Chrome profile, sign in privately, then explicitly return control. No VNC or credentials in chat."
+                : chromeWarning
+              : "Sign in privately in this agent’s browser session, then return control to the agent."}
           </p>
           <ChatFormActions>
             <button
@@ -198,13 +280,27 @@ export function InterventionCard({
             <button
               type="button"
               className="primary"
+              disabled={busy || (connectedChrome && !chromeReady)}
               onClick={() => {
-                onComputer();
-                setBrowserOpened(true);
+                if (connectedChrome) void chromeControl("focus");
+                else {
+                  onComputer();
+                  setBrowserOpened(true);
+                }
               }}
             >
-              Open browser
+              {connectedChrome ? "Open in Chrome" : "Open browser"}
             </button>
+            {connectedChrome && (
+              <button
+                type="button"
+                className="primary"
+                disabled={busy || !chromeReady}
+                onClick={() => void chromeControl("resume")}
+              >
+                Return control to agent
+              </button>
+            )}
           </ChatFormActions>
         </>
       )}

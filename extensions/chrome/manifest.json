@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Jelly Connected Chrome (experimental)",
+  "version": "0.2.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwZ5R3+miCRGo8PA9e4Ji60b/ijt92tF5dDNX1XZUtyaflLZ6yPlriqKtuG/QI+kyL+LMOC3tGbqJdhlmj1pIGArbr3bGt2UvcDh8zQOzbICEea7ciNlJzu5bC+lteoqsCv0hvThjTf1fENkxALz40yu8iakKlx1885flYs+Naed3E5gyOHbN3I/BHObySub/xoo7qbXIsf82LoIs1W2LxJjU7e4kSA4kS8coczPlx+fnIiSNXEzykp+o7PKmsfcS6ONNWL98l2TfHVGAJoTFoNrf0ikaGPlLzY6szckTMAjqCfciWdtzGKDpx55hyk67io+VNSaAj2QszB6Od1jnAQIDAQAB",
+  "description": "Explicit, site-scoped Jelly task tabs. Not a browser sandbox.",
+  "permissions": [
+    "nativeMessaging",
+    "debugger",
+    "tabs",
+    "tabGroups",
+    "storage",
+    "scripting",
+    "webNavigation",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": ["https://*/*"],
+  "background": { "service_worker": "worker.js", "type": "module" },
+  "action": { "default_popup": "popup.html" }
+}

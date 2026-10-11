@@ -21,3 +21,7 @@ Projects and the Familiar UI are delivered. See [the delivery record](../plans_d
 ## Proposed features
 
 - [Apps Home Screen and managed apps](apps.md): a private app launcher, persistent user services, Tailscale access, agent deployment tools, and unobtrusive navigation home.
+
+## In-progress integration
+
+- [Chrome integration](chrome-integration.md): shared-profile local implementation and headed fixture tests are implemented. Remaining: signed-in security/restart gates, isolated child provisioning, distribution and explicit operator activation. See the plan's implementation matrix; no normal-profile deployment has occurred.

@@ -214,7 +214,7 @@ export function AgentInbox({
   }
   return (
     <>
-      <div className="inbox-toolbar">
+      <div className="inbox-toolbar" data-scope={inProject ? "project" : "root"}>
         {inProject ? (
           <button
             className="inbox-back"
@@ -229,6 +229,7 @@ export function AgentInbox({
         )}
         <h1
           ref={heading}
+          className={inProject ? undefined : "destination-title"}
           tabIndex={-1}
           title={inProject ? project.name : "Agents"}
         >

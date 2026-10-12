@@ -72,8 +72,11 @@ try {
       imageRequested = resolve;
     });
     let failOnce = true;
+    let firstBootstrap = true;
     await page.route("**/api/control-session", async (route) => {
-      await authGate;
+      // Private state/SSE needs the first real session; delay image refresh only.
+      if (firstBootstrap) firstBootstrap = false;
+      else await authGate;
       await route.continue();
     });
     await page.route("**/api/images/**", async (route) => {

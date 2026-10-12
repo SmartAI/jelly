@@ -1,69 +1,114 @@
-export async function api<T>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
+import type { AppRecord, AppsPage, AppsCapabilities } from "../shared/apps";
+
+let csrfPromise: Promise<string> | undefined;
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const headers = new Headers(options.headers);
+  if (!headers.has("Content-Type"))
+    headers.set("Content-Type", "application/json");
   const response = await fetch(`/api${path}`, {
     ...options,
-    headers: { "Content-Type": "application/json", ...options.headers },
+    credentials: "same-origin",
+    headers,
   });
+  if (response.status === 204) return undefined as T;
   const data = await response.json();
   if (!response.ok) throw new Error(data.error ?? "Could not reach Jelly.");
   return data as T;
 }
-export const post = <T>(path: string, data: unknown) =>
-  api<T>(path, { method: "POST", body: JSON.stringify(data) });
-let csrfPromise: Promise<string> | undefined;
-export async function control<T>(
-  path: string,
-  data: unknown = {},
-  retry = true,
-): Promise<T> {
-  csrfPromise ??= api<{ csrf: string }>("/control-session")
-    .then((v) => v.csrf)
-    .catch((e) => {
+/** Bootstrap before private reads, images and the cookie-authenticated event stream. */
+export function establishControlSession(): Promise<string> {
+  return (csrfPromise ??= request<{ csrf: string }>("/control-session")
+    .then((value) => value.csrf)
+    .catch((error) => {
       csrfPromise = undefined;
-      throw e;
-    });
-  const csrf = await csrfPromise;
-  try {
-    return await api<T>(path, {
-      method: "POST",
-      headers: { "x-jelly-csrf": csrf },
-      body: JSON.stringify(data),
-    });
-  } catch (e) {
-    if (
-      (e as Error).message.includes("control session") ||
-      (e as Error).message.includes("control token")
-    ) {
-      csrfPromise = undefined;
-      if (retry) return control<T>(path, data, false);
-    }
-    throw e;
-  }
+      throw error;
+    }));
 }
-/** Directory and project control uses the same session/token as Computer. */
-export async function projectApi<T>(
+export async function api<T>(
   path: string,
   options: RequestInit = {},
   retry = true,
 ): Promise<T> {
-  csrfPromise ??= api<{ csrf: string }>("/control-session")
-    .then((v) => v.csrf)
-    .catch((e) => {
-      csrfPromise = undefined;
-      throw e;
-    });
+  if (path === "/control-session" || path === "/health")
+    return request<T>(path, options);
+  const csrf = await establishControlSession();
+  const headers = new Headers(options.headers);
+  if (!["GET", "HEAD"].includes((options.method ?? "GET").toUpperCase()))
+    headers.set("x-jelly-csrf", csrf);
   try {
-    return await api<T>(path, {
-      ...options,
-      headers: { ...options.headers, "x-jelly-csrf": await csrfPromise },
-    });
-  } catch (e) {
-    if (retry && /control session|control token/.test((e as Error).message)) {
+    return await request<T>(path, { ...options, headers });
+  } catch (error) {
+    if (
+      retry &&
+      /control session|control token/.test((error as Error).message)
+    ) {
       csrfPromise = undefined;
-      return projectApi<T>(path, options, false);
+      return api<T>(path, options, false);
     }
-    throw e;
+    throw error;
   }
+}
+export const post = <T>(path: string, data: unknown) =>
+  api<T>(path, { method: "POST", body: JSON.stringify(data) });
+export const control = <T>(path: string, data: unknown = {}) =>
+  post<T>(path, data);
+/** All private API operations use the same session/token, including legacy writes. */
+export const projectApi = api;
+
+export const appsApi = {
+  list(
+    query: { q?: string; after?: string; limit?: number } = {},
+    signal?: AbortSignal,
+  ) {
+    const params = new URLSearchParams();
+    if (query.q) params.set("q", query.q);
+    if (query.after) params.set("after", query.after);
+    if (query.limit) params.set("limit", String(query.limit));
+    return api<AppsPage>(`/apps?${params}`, { signal });
+  },
+  get: (id: string, signal?: AbortSignal) =>
+    api<AppRecord>(`/apps/${encodeURIComponent(id)}`, { signal }),
+  capabilities: () => api<AppsCapabilities>("/apps/capabilities"),
+  register: (input: Record<string, unknown>) =>
+    control<AppRecord>("/apps/register", input),
+  deploy: (manifest: Record<string, unknown>) =>
+    control<unknown>("/apps/deploy", manifest),
+  star: (id: string, starred: boolean) =>
+    control<AppRecord>(`/apps/${encodeURIComponent(id)}/star`, { starred }),
+  launch: (id: string, navigationId: string) =>
+    control<AppRecord>(`/apps/${encodeURIComponent(id)}/launch`, {
+      navigationId,
+    }),
+  control: (id: string, action: "start" | "stop" | "restart") =>
+    control<AppRecord>(`/apps/${encodeURIComponent(id)}/control`, { action }),
+  remove: (id: string, uninstall: boolean) =>
+    control<void>(`/apps/${encodeURIComponent(id)}/remove`, { uninstall }),
+  logs: (id: string) =>
+    api<{ text: string; warning: string }>(
+      `/apps/${encodeURIComponent(id)}/logs`,
+    ),
+  icon: (id: string, file: File) =>
+    projectApi<AppRecord>(`/apps/${encodeURIComponent(id)}/icon`, {
+      method: "POST",
+      headers: { "Content-Type": file.type },
+      body: file,
+    }),
+};
+
+// Tiles, viewer entry and its direct fallback share a navigation ID. Reload and
+// StrictMode must not turn one navigation into multiple launch operations.
+const appLaunches = new Map<string, Promise<AppRecord>>();
+export function recordAppLaunch(id: string, navigationId: string) {
+  const key = `${id}:${navigationId}`;
+  let pending = appLaunches.get(key);
+  if (!pending) {
+    pending = appsApi.launch(id, navigationId).catch((error) => {
+      appLaunches.delete(key);
+      throw error;
+    });
+    appLaunches.set(key, pending);
+    if (appLaunches.size > 256)
+      appLaunches.delete(appLaunches.keys().next().value!);
+  }
+  return pending;
 }

@@ -50,7 +50,7 @@ async function setup(extra: Partial<Parameters<typeof startApp>[0]> = {}) {
       typeof input === "string" && input.startsWith("/")
         ? origin + input
         : input,
-      { ...init, headers: { ...init?.headers, ...(cookie ? { cookie } : {}) } },
+      { ...init, headers: { ...Object.fromEntries(new Headers(init?.headers)), ...(cookie ? { cookie } : {}) } },
     );
     if (response.headers.get("set-cookie"))
       cookie = response.headers.get("set-cookie")!.split(";")[0]!;
@@ -58,7 +58,7 @@ async function setup(extra: Partial<Parameters<typeof startApp>[0]> = {}) {
   }) as typeof fetch;
   globalThis.EventSource = class extends NodeEventSource {
     constructor(url: string) {
-      super(new URL(url, origin), { fetch: originalFetch });
+      super(new URL(url, origin), { fetch: (input, init) => originalFetch(input, { ...init, headers: { ...Object.fromEntries(new Headers(init?.headers)), cookie } }) });
     }
   } as unknown as typeof EventSource;
   return app;
@@ -326,7 +326,7 @@ test("sudo approval card submits privately, clears its input, and reflects the c
       typeof input === "string" && input.startsWith("/")
         ? origin + input
         : input,
-      { ...init, headers: { ...init?.headers, ...(cookie ? { cookie } : {}) } },
+      { ...init, headers: { ...Object.fromEntries(new Headers(init?.headers)), ...(cookie ? { cookie } : {}) } },
     );
     if (response.headers.get("set-cookie"))
       cookie = response.headers.get("set-cookie")!.split(";")[0]!;
@@ -992,7 +992,7 @@ test("older servers default the effort display to High without overwriting saved
     if (String(input) === "/api/config" && init?.method === "PUT")
       changes.push(JSON.parse(init.body));
     const response = await fetchBefore(input, init);
-    if (legacy && String(input).startsWith("/api/state")) {
+    if (response.ok && legacy && String(input).startsWith("/api/state")) {
       const snapshot = await response.json();
       snapshot.agents = snapshot.agents.map(({ model, effort, ...agent }: any) => agent);
       return Response.json(snapshot);
@@ -2087,7 +2087,7 @@ test("plus creates and opens an agent immediately without a modal or duplicate i
   }) as typeof fetch;
   fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
   fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
-  expect(requests).toBe(1);
+  await waitFor(() => expect(requests).toBe(1));
   expect(screen.getByRole("button", { name: "Create agent" }).hasAttribute("disabled")).toBe(true);
   expect(screen.queryByRole("dialog")).toBeNull();
   release();
@@ -2740,7 +2740,7 @@ for (const chatgptReady of [true, false]) {
     const fetch = globalThis.fetch;
     globalThis.fetch = (async (input: any, init: any) => {
       const response = await fetch(input, init);
-      if (typeof input === "string" && input.startsWith("/api/state")) {
+      if (response.ok && typeof input === "string" && input.startsWith("/api/state")) {
         const state = await response.json();
         delete state.config.ready;
         return Response.json(state);

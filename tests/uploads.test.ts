@@ -96,7 +96,7 @@ test("uploads enforce control protections, validate paths, and never overwrite f
   expect(readdirSync(destination).sort()).toEqual(["alias", "existing"]);
   const oversized = await fetch(base + "/api/agents", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...headers, "Content-Type": "application/json" },
     body: JSON.stringify({ name: "x".repeat(65000) }),
   });
   expect(oversized.status).toBe(413);

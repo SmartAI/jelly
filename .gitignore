@@ -14,7 +14,6 @@ dist/
 # Local instructions, service migration, and development artifacts.
 /AGENTS.md
 /AGENTS.override.md
-/scripts/restart-when-idle.sh
 /output/
 /.pi/subagents/
 /Screenshot 2026-09-28 at 16.54.59.png

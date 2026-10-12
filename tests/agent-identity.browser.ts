@@ -46,18 +46,17 @@ try {
       .waitFor();
     if (await page.locator(".conversation-header .agent-identity").count())
       throw new Error("Empty agent is already in the header");
-    const titleStyle = await page
-      .locator(".initial-agent-title")
-      .evaluate((element) => {
-        const style = getComputedStyle(element);
-        return [
-          style.fontFamily,
-          style.fontSize,
-          style.fontWeight,
-          style.lineHeight,
-          style.letterSpacing,
-        ];
-      });
+    // SSE selection updates may replace the initial title during startup. Read
+    // styles atomically from the currently attached element, not a retired node.
+    const titleStyleHandle = await page.waitForFunction(() => {
+      const element = document.querySelector(".initial-agent-title");
+      if (!element?.isConnected) return false;
+      const style = getComputedStyle(element);
+      const values = [style.fontFamily, style.fontSize, style.fontWeight, style.lineHeight, style.letterSpacing];
+      return values.every(Boolean) ? values : false;
+    });
+    const titleStyle = await titleStyleHandle.jsonValue();
+    await titleStyleHandle.dispose();
     const titlePillBox = await page
       .locator(".initial-agent-identity")
       .boundingBox();

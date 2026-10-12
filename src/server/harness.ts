@@ -6,6 +6,8 @@ import { GeneratedImages, imageGenerationTool } from "./image-generation";
 import { RenderedFiles, renderFileTool } from "./rendered-files";
 import { applyPatchTool } from "./apply-patch";
 import { webTools, WEB_RESEARCH_INSTRUCTIONS } from "./web-tools";
+import { APPS_INSTRUCTIONS, instanceInfoTool } from "./apps-tools";
+import type { AppsService } from "./apps-service";
 import { SessionWork } from "./session-work";
 import { extensionUI } from "./extension-ui";
 import { prepareSubagentLiveness } from "./subagent-liveness";
@@ -23,7 +25,6 @@ import {
 import { effectiveCwd } from "./directories";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { Type } from "typebox";
 import {
   ModelRuntime,
   createAgentSession,
@@ -142,6 +143,7 @@ export class Harness {
     report: (type: string, data: Record<string, unknown>) => void = () => {},
     context: FileEntry[] | null = null,
     onSubagents?: (snapshot: SubagentSnapshot, sources: SubagentSources) => void,
+    apps?: AppsService,
   ): Promise<AgentSession> {
     this.requireConnection(config);
     const model = this.registry.find(config.provider, config.model);
@@ -183,7 +185,7 @@ export class Harness {
       // or the previously supported APPEND_SYSTEM.md instructions.
       systemPrompt: "",
       appendSystemPromptOverride: (prompts) => [
-        `You are ${agent.name}, a persistent agent in Jelly.\n${agent.instructions}\nYou can inspect this Jelly instance with instance_info. All tools and subagent delegation are pre-authorized by the operator. Execute tasks directly without approval prompts. You can browse directories, read/write/edit files, run shell commands, and delegate to subagents. Use the same provider/model and effort as this parent for delegated work unless asked otherwise. Prefer asynchronous subagent workflows (async:true) so you can supervise children and respond to status updates. Yield while children work; native completion notifications and approximately five-minute status checkpoints wake this session. Do not block with bg_wait merely to await ordinary async subagents. Use async:false only for deliberately short blocking work. Use the installed subagent tool schema; do not ask for delegation approval. Use render_file to show existing images, audio, video, or text files in chat without reading their contents into model context; no prior read call is needed. You may use all Pi tools; the workspace directory is a default working directory, not a sandbox. Use request_sudo for privileged commands; it executes automatically when the OS allows, and requests a password only if authentication is needed. Never ask for passwords in chat. Use request_browser_login when a website requires sign-in; a person will take over the browser privately and explicitly return control. Browser tools are unavailable during human control. Do not put credentials in tool arguments. Be clear about your capabilities.\n${WEB_RESEARCH_INSTRUCTIONS}\n${this.mcps.instructions()}`,
+        `You are ${agent.name}, a persistent agent in Jelly.\n${agent.instructions}\nYou can inspect this Jelly instance with instance_info. All tools and subagent delegation are pre-authorized by the operator. Execute tasks directly without approval prompts. You can browse directories, read/write/edit files, run shell commands, and delegate to subagents. Use the same provider/model and effort as this parent for delegated work unless asked otherwise. Prefer asynchronous subagent workflows (async:true) so you can supervise children and respond to status updates. Yield while children work; native completion notifications and approximately five-minute status checkpoints wake this session. Do not block with bg_wait merely to await ordinary async subagents. Use async:false only for deliberately short blocking work. Use the installed subagent tool schema; do not ask for delegation approval. Use render_file to show existing images, audio, video, or text files in chat without reading their contents into model context; no prior read call is needed. You may use all Pi tools; the workspace directory is a default working directory, not a sandbox. Use request_sudo for privileged commands; it executes automatically when the OS allows, and requests a password only if authentication is needed. Never ask for passwords in chat. Use request_browser_login when a website requires sign-in; a person will take over the browser privately and explicitly return control. Browser tools are unavailable during human control. Do not put credentials in tool arguments. Be clear about your capabilities.\n${WEB_RESEARCH_INSTRUCTIONS}\n${APPS_INSTRUCTIONS}\n${this.mcps.instructions()}`,
         ...prompts,
       ],
     });
@@ -218,26 +220,7 @@ export class Harness {
         applyPatchTool(cwd),
         ...webTools(),
         ...extraTools,
-        {
-          name: "instance_info",
-          label: "Workspace info",
-          description: "Read the current Jelly instance and agent identity.",
-          parameters: Type.Object({}),
-          execute: async () => ({
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({
-                  instance,
-                  agent: { id: agent.id, name: agent.name },
-                  runtime: "Pi",
-                  storage: "SQLite",
-                }),
-              },
-            ],
-            details: {},
-          }),
-        },
+        instanceInfoTool(instance, agent, apps),
       ],
     });
     try {

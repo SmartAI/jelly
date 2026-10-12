@@ -21,6 +21,8 @@ import type { Activity, Mode } from "../shared/types";
 import { Store } from "./store";
 import { Harness } from "./harness";
 import { HttpError, JellyService } from "./service";
+import type { AppsAdapter } from "./apps-runtime";
+import { APP_ICON_MAX_BYTES } from "./apps-icons";
 export interface AppOptions {
   dataDir: string;
   sudoExecutor?: SudoExecutor;
@@ -32,6 +34,7 @@ export interface AppOptions {
   port?: number;
   allowedOrigins?: string[];
   staticDir?: string;
+  appsAdapter?: AppsAdapter;
 }
 const json = (value: unknown, status = 200) =>
   Response.json(value, {
@@ -72,6 +75,23 @@ async function body(req: Request) {
   } catch {
     throw new HttpError(400, "Invalid JSON object.");
   }
+}
+async function iconBody(req: Request) {
+  const contentType = req.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (!["image/png", "image/jpeg", "image/webp"].includes(contentType)) throw new HttpError(415, "Upload PNG, JPEG, or WebP with its matching image Content-Type.");
+  if (Number(req.headers.get("content-length")) > APP_ICON_MAX_BYTES) throw new HttpError(413, "App icons must be at most 1 MiB.");
+  const reader = req.body?.getReader(); const chunks: Uint8Array[] = []; let size = 0;
+  if (reader) {
+    try {
+      while (true) {
+        const chunk = await reader.read(); if (chunk.done) break;
+        size += chunk.value.byteLength;
+        if (size > APP_ICON_MAX_BYTES) { await reader.cancel(); throw new HttpError(413, "App icons must be at most 1 MiB."); }
+        chunks.push(chunk.value);
+      }
+    } finally { reader.releaseLock(); }
+  }
+  return { bytes: Buffer.concat(chunks), contentType };
 }
 function text(value: unknown, name: string, max: number, empty = false) {
   if (
@@ -124,7 +144,7 @@ export async function startApp(options: AppOptions) {
       options,
     );
     cleanup = () => service.close();
-    const controls = new ControlSessions();
+    const controls = new ControlSessions(options.allowedOrigins);
     const connections = new Connections(
       service.harness.auth,
       (mode) => service.setMode(mode),
@@ -227,20 +247,35 @@ export async function startApp(options: AppOptions) {
             ]);
             if (origin && !allowed.has(origin))
               throw new HttpError(403, "This origin is not allowed.");
-            if (req.headers.get("sec-fetch-site") === "cross-site")
-              throw new HttpError(403, "Cross-site requests are not allowed.");
+            if (["cross-site", "same-site"].includes(req.headers.get("sec-fetch-site") ?? "") && (!origin || !allowed.has(origin)))
+              throw new HttpError(403, "Cross-origin requests are not allowed, including same-host app ports.");
+            const controlCookies = (req.headers.get("cookie") ?? "").split(";").map(pair => pair.trim().split("=", 1)[0]);
+            if (controlCookies.filter(cookie => [controls.cookieName, "jelly_control", "__Host-jelly_control"].includes(cookie ?? "")).length > 1)
+              throw new HttpError(400, "Ambiguous control cookies. Clear conflicting path/domain cookies and reopen Jelly.");
+            if (req.method === "OPTIONS") throw new HttpError(405, "Cross-origin preflight is not supported.");
+            const bootstrap = req.method === "GET" && url.pathname === "/api/control-session";
+            if (bootstrap) {
+              const mode = req.headers.get("sec-fetch-mode");
+              const destination = req.headers.get("sec-fetch-dest");
+              if ((mode && !["cors", "same-origin"].includes(mode)) || (destination && destination !== "empty"))
+                throw new HttpError(403, "Establish control through Jelly's same-origin API, not navigation, frames or resources.");
+            } else if (url.pathname !== "/api/health" || req.method !== "GET") {
+              // One policy for every private read, mutation and future route;
+              // route-local checks remain useful for connection/ticket binding.
+              controls.require(req, !["GET", "HEAD"].includes(req.method));
+            }
             if (
               req.method === "GET" &&
               url.pathname === "/api/control-session"
             ) {
-              const { session, cookie } = controls.create(req);
+              const { session, cookie, retiredCookies } = controls.create(req);
+              const headers = new Headers({ "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+              headers.append("Set-Cookie", cookie);
+              for (const retired of retiredCookies) headers.append("Set-Cookie", retired);
               return Response.json(
                 { csrf: session.csrf },
                 {
-                  headers: {
-                    "Set-Cookie": cookie,
-                    "Cache-Control": "no-store",
-                  },
+                  headers,
                 },
               );
             }
@@ -260,6 +295,48 @@ export async function startApp(options: AppOptions) {
               );
               if (server.upgrade(req, { data: { ...connection, computer } })) return;
               throw new HttpError(400, "WebSocket upgrade required.");
+            }
+            if (url.pathname === "/api/apps" || url.pathname.startsWith("/api/apps/")) {
+              controls.require(req, req.method !== "GET");
+              if (req.method === "GET" && url.pathname === "/api/apps") {
+                await service.apps.capabilities();
+                return json(service.apps.list({
+                  q: url.searchParams.get("q") ?? undefined,
+                  after: url.searchParams.get("after") ?? undefined,
+                  limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined,
+                }));
+              }
+              if (req.method === "GET" && url.pathname === "/api/apps/capabilities") return json(await service.apps.capabilities());
+              if (req.method === "POST" && url.pathname === "/api/apps/register") return json(service.apps.register(await body(req)));
+              if (req.method === "POST" && url.pathname === "/api/apps/deploy") return json(await service.apps.deploy(await body(req)));
+              const route = url.pathname.match(/^\/api\/apps\/([^/]+)(?:\/(star|launch|control|remove|logs|icon))?$/);
+              if (route) {
+                const [, id, action] = route;
+                if (req.method === "GET" && !action) return json(service.apps.get(id!));
+                if (req.method === "GET" && action === "icon") {
+                  const icon = service.apps.icon(id!);
+                  return new Response(new Uint8Array(icon.bytes), { headers: { "Content-Type": icon.contentType, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Cross-Origin-Resource-Policy": "same-origin" } });
+                }
+                if (req.method === "POST" && action === "icon") return json(await service.apps.setIcon(id!, await iconBody(req)));
+                if (req.method === "GET" && action === "logs") return json(await service.apps.logs(id!, url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined));
+                if (req.method === "POST") {
+                  const input = await body(req);
+                  if (action === "star") {
+                    if (typeof input.starred !== "boolean") throw new HttpError(400, "starred must be a boolean.");
+                    return json(service.apps.setStarred(id!, input.starred));
+                  }
+                  if (action === "launch") return json(service.apps.recordLaunch(id!, text(input.navigationId, "Navigation ID", 128)));
+                  if (action === "control") {
+                    if (!["start", "stop", "restart"].includes(input.action as string)) throw new HttpError(400, "Invalid app lifecycle action.");
+                    return json(await service.apps.control(id!, input.action as "start" | "stop" | "restart"));
+                  }
+                  if (action === "remove") {
+                    if (typeof input.uninstall !== "boolean") throw new HttpError(400, "uninstall must be a boolean.");
+                    return json(await service.apps.remove(id!, { uninstall: input.uninstall }));
+                  }
+                }
+              }
+              throw new HttpError(404, "Apps API route not found.");
             }
             if (url.pathname === "/api/chrome" && req.method === "GET") {
               controls.require(req, false);
@@ -397,7 +474,7 @@ export async function startApp(options: AppOptions) {
               }
             }
             if (req.method === "GET" && url.pathname === "/api/health")
-              return json({ ok: true, instanceId: store.instance().id });
+              return json({ ok: true });
             if (req.method === "GET" && url.pathname === "/api/state") {
               if (
                 url.searchParams.has("selection") &&
@@ -765,7 +842,7 @@ export async function startApp(options: AppOptions) {
           if (target !== staticDir && !target.startsWith(staticDir + sep))
             throw new HttpError(404, "Not found.");
           const file = Bun.file(
-            pathname === "/" ? join(staticDir, "index.html") : target,
+            pathname === "/" || /^\/(?:apps|agents)(?:\/[^/]+(?:\/[^/]+)*)?\/?$/.test(pathname) ? join(staticDir, "index.html") : target,
           );
           if (!(await file.exists()))
             throw new HttpError(
@@ -776,6 +853,10 @@ export async function startApp(options: AppOptions) {
             headers: {
               "Content-Type": file.type,
               "X-Content-Type-Options": "nosniff",
+              "Content-Security-Policy": "frame-ancestors 'none'",
+              "X-Frame-Options": "DENY",
+              "Referrer-Policy": "no-referrer",
+              "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), fullscreen=()",
               "Cache-Control": pathname.startsWith("/assets/")
                 ? "public, max-age=31536000, immutable"
                 : "no-cache",
@@ -806,6 +887,7 @@ export async function startApp(options: AppOptions) {
       const failure = outcomes.find((outcome) => outcome.status === "rejected");
       if (failure?.status === "rejected") throw failure.reason;
     };
+    service.apps.configureOrigins([server.url.origin, `http://localhost:${server.port}`, ...(options.allowedOrigins ?? [])]);
     service.chrome.protectOrigins([server.url.origin, `http://localhost:${server.port}`, ...(options.allowedOrigins ?? [])]);
     service.computer.protectOrigins([
       server.url.origin,

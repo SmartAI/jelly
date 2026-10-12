@@ -6,17 +6,19 @@ import { useEffect, useRef, useState } from "react";
 import { X, Monitor, RotateCw } from "lucide-react";
 import type { ComputerState } from "../shared/types";
 import { api, control, projectApi } from "./api";
-export function ComputerPanel(props: { agentId: string; onClose: () => void; onChange: () => void }) {
+export function ComputerPanel(props: { agentId: string; onClose: () => void; onChange: () => void; navigationNotice?: string }) {
   return <SessionComputerPanel key={props.agentId} {...props} />;
 }
 function SessionComputerPanel({
   agentId,
   onClose,
   onChange,
+  navigationNotice,
 }: {
   agentId: string;
   onClose: () => void;
   onChange: () => void;
+  navigationNotice?: string;
 }) {
   const scoped = (path: string) => `${path}?agentId=${encodeURIComponent(agentId)}`;
   const alive = useRef(true);
@@ -153,6 +155,7 @@ function SessionComputerPanel({
   return (
     <Modal title="Agent computer" onClose={onClose} beforeClose={returnControlBeforeClose}
       dismissible={!busy} kind="panel" className="computer-panel">
+      {navigationNotice && <p role="status">{navigationNotice}</p>}
       <div className="computer-toolbar">
         <span>
           {owned

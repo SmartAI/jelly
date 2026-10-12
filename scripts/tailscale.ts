@@ -22,6 +22,18 @@ export async function tailscaleNetwork(port: number) {
     TailscaleIPs?: string[];
     Self?: { DNSName?: string; HostName?: string };
   };
+  return tailscaleOrigins(status, port);
+}
+
+/** Exact aliases from the same status document used by production startup. */
+export function tailscaleOrigins(
+  status: {
+    BackendState: string;
+    TailscaleIPs?: string[];
+    Self?: { DNSName?: string; HostName?: string };
+  },
+  port: number,
+) {
   const addresses = (status.TailscaleIPs ?? []).filter((ip) => isIP(ip));
   if (status.BackendState !== "Running" || !addresses.length)
     throw new Error(

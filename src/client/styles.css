@@ -628,7 +628,7 @@ dialog label {
   margin: 16px 0;
   color: var(--text);
 }
-dialog input:not([type="radio"]),
+dialog input:not([type="radio"]):not([type="checkbox"]),
 dialog textarea {
   display: block;
   width: 100%;
@@ -2605,7 +2605,8 @@ main > .connection-error + .conversation {
 /* Override both dvh and the installed-iOS 100vh workaround only while the
    keyboard is open. The visual viewport excludes the keyboard/accessory bar. */
 @media (max-width: 767px), (any-pointer: coarse) {
-  #root > .app[data-keyboard-open="true"] {
+  #root > .app[data-keyboard-open="true"],
+  .agents-layer > .app[data-keyboard-open="true"] {
     position: fixed;
     top: var(--keyboard-viewport-top, 0px);
     left: 0;

@@ -79,7 +79,15 @@ import type {
   Snapshot,
   MessageMode,
 } from "../shared/types";
-import { api, control, post } from "./api";
+import { api, control, post, appsApi, recordAppLaunch } from "./api";
+import type { AppRecord, AppsCapabilities } from "../shared/apps";
+import { AppsHome } from "./AppsHome";
+import { AppViewer } from "./AppViewer";
+import { AppDetails, RemoveApp } from "./AppDetails";
+import { AppBuilder, appIntentDraft, type AppIntent } from "./AppBuilder";
+import { appOrigin, appException } from "./app-origin";
+import { useAppsNavigation } from "./apps-navigation";
+import "./Apps.css";
 import { readPreference, savePreference, useTheme } from "./theme";
 import { registerWorkspaceTools } from "./webmcp";
 
@@ -745,16 +753,33 @@ function EventItem({
     );
   return null;
 }
-export function App() {
+function AgentsWorkspace({ active, destinationReady, explicitAgentId, explicitNavigationId, navigationNotice, intent, onIntentDone, onSnapshot, onPrivateSheet }: {
+  active: boolean;
+  destinationReady: boolean;
+  explicitAgentId: string | null;
+  explicitNavigationId: string;
+  navigationNotice: string;
+  onPrivateSheet: (open: boolean) => void;
+  intent: AppIntent | null;
+  onIntentDone: () => void;
+  onSnapshot: (snapshot: Snapshot) => void;
+}) {
+  const explicitAgent = useRef(explicitAgentId);
+  explicitAgent.current = explicitAgentId;
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const appRoot = useRef<HTMLDivElement>(null);
   useInputModality(appRoot);
   const { theme, setTheme, resolved } = useTheme();
   const [computerOpen, setComputerOpen] = useState<string | null>(null);
+  useLayoutEffect(() => { onPrivateSheet(!!computerOpen); }, [computerOpen, onPrivateSheet]);
   const [moveTarget, setMoveTarget] = useState<AgentRecord | null>(null);
   const [data, setData] = useState<Snapshot | null>(null);
   const [selected, setSelected] = useState("");
+  useEffect(() => { if (data) onSnapshot(data); }, [data, onSnapshot]);
   const [scope, setScope] = useState<Scope>({ kind: "all" });
   const [listOpen, setListOpen] = useState(true);
+  const [chatHistoryOwner] = useState(requestId);
   const [mobile, setMobile] = useState(
     () => window.matchMedia("(max-width:767px)").matches,
   );
@@ -793,6 +818,9 @@ export function App() {
   const [modal, setModal] = useState<
     "settings" | "archived" | "options" | "profile" | null
   >(null);
+  useEffect(() => {
+    if (!active) { setModal(null); setProjectModal(null); setUploadTarget(null); }
+  }, [active]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [uploadTarget, setUploadTarget] = useState<AgentRecord | null>(null);
   const [sending, setSending] = useState(false);
@@ -800,6 +828,7 @@ export function App() {
   const [steering, setSteering] = useState<string | null>(null);
   const [savingModel, setSavingModel] = useState(false);
   const composerInput = useRef<HTMLTextAreaElement>(null);
+  const appDraftFocus = useRef<string | null>(null);
   const [archiving, setArchiving] = useState(false);
   const [creatingAgent, setCreatingAgent] = useState(false);
   const [creationError, setCreationError] = useState("");
@@ -837,11 +866,14 @@ export function App() {
   const backToAgents = useCallback(() => {
     setListOpen(true);
     composerInput.current?.blur();
-    if (window.history.state?.jellyChat) window.history.back();
-  }, []);
+    // Only pop entries created by this mounted workspace. A direct link or
+    // reload may otherwise leave this document and discard its current draft.
+    if (window.history.state?.jellyChat && window.history.state?.jellyChatOwner === chatHistoryOwner) window.history.back();
+    else window.history.replaceState({ ...window.history.state, jellyChat: false, jellyChatOwner: null }, "", "/agents");
+  }, [chatHistoryOwner]);
   useChatNavigation(appRoot, mobile, listOpen, backToAgents);
   useEffect(() => {
-    if (!mobile) return;
+    if (!mobile || !active) return;
     const timer = window.setTimeout(
       () => {
         const root = appRoot.current;
@@ -856,9 +888,13 @@ export function App() {
       350,
     );
     return () => window.clearTimeout(timer);
-  }, [mobile, listOpen]);
+  }, [mobile, listOpen, active]);
   useEffect(() => {
     const pop = () => {
+      if (appRoot.current?.querySelector("dialog.computer-panel[open]")) return;
+      if (!/^\/agents(?:\/|$)/.test(window.location.pathname) && window.location.pathname !== "/") return;
+      // Destination history must not erase the mounted workspace's scope.
+      if (window.history.state?.jellyDestination === "agents" && !('jellyProject' in window.history.state)) return;
       setListOpen(!window.history.state?.jellyChat);
       applyHistoryScope.current(window.history.state?.jellyProject);
     };
@@ -939,6 +975,12 @@ export function App() {
               : [],
             instance: next.instance.id,
           };
+          const linkedAgent = next.agents.find(agent => agent.id === explicitAgent.current);
+          if (linkedAgent) {
+            nav.current.selected = linkedAgent.id;
+            nav.current.scope = linkedAgent.projectId ? { kind: "project", projectId: linkedAgent.projectId } : { kind: "all" };
+            if (activeRef.current) setListOpen(false);
+          }
           setScope(nav.current.scope);
           if (nav.current.scope.kind === "project" && !window.history.state?.jellyProject)
             window.history.replaceState({ ...window.history.state, jellyProject: nav.current.scope.projectId, jellyProjectEntry: false }, "");
@@ -1022,6 +1064,8 @@ export function App() {
             if (dead || source !== connection) return;
             try {
               const update = JSON.parse(event.data);
+              if (typeof update.type === "string" && update.type.startsWith("app"))
+                window.dispatchEvent(new window.CustomEvent("jelly:apps-updated"));
               if (update.type === "subagents_updated") {
                 if (typeof update.runId === "string")
                   setSubagentRunRevisions((revisions) => ({
@@ -1143,12 +1187,18 @@ export function App() {
   const unreadAgents = useUnreadMessages(
     data?.instance.id ?? "",
     data?.latestAssistantMessages,
-    agent && (!mobile || !listOpen) && !scrolledUp ? agent.id : null,
+    active && destinationReady && agent && (!mobile || !listOpen) && !scrolledUp ? agent.id : null,
   );
   const draft = agent ? (drafts[agent.id] ?? "") : "";
   useComposerSize(composerInput, draft, agent?.id, actionError, connectionReady, !!agent?.archivedAt);
   const running = agent?.status === "running" || agent?.status === "waiting";
   const selectionReady = !!data && (data.selectedAgentId ?? "") === selected;
+  useEffect(() => {
+    if (active && selectionReady && agent?.id === appDraftFocus.current) {
+      appDraftFocus.current = null;
+      composerInput.current?.focus({ preventScroll: true });
+    }
+  }, [active, selectionReady, agent?.id, draft]);
   const canSend =
     connectionReady &&
     selectionReady &&
@@ -1160,13 +1210,17 @@ export function App() {
     !savingModel &&
     !editingIdentity &&
     !!draft.trim();
-  const select = (id: string) => {
+  const select = (id: string, fromLink = false) => {
     rememberScroll();
-    if (mobile && !window.history.state?.jellyChat)
+    if (fromLink)
+      window.history.replaceState({ ...window.history.state, jellyChat: mobile, jellyAgent: id, jellyChatOwner: window.history.state?.jellyChatOwner === chatHistoryOwner ? chatHistoryOwner : null }, "");
+    else if (mobile && !window.history.state?.jellyChat)
       window.history.pushState(
-        { ...window.history.state, jellyChat: true },
-        "",
+        { ...window.history.state, jellyChat: true, jellyAgent: id, jellyChatOwner: chatHistoryOwner },
+        "", `/agents/${encodeURIComponent(id)}`,
       );
+    else if (activeRef.current)
+      window.history.replaceState({ ...window.history.state, jellyAgent: id }, "", mobile ? `/agents/${encodeURIComponent(id)}` : "/agents");
     historyGeneration.current++;
     setHistory(historyCache.current.has(id) ? { agentId: id, page: historyCache.current.get(id)! } : null);
     setLoadingHistory(false);
@@ -1232,11 +1286,14 @@ export function App() {
   function openProject(id: string) {
     if (nav.current.scope.kind !== "project" || nav.current.scope.projectId !== id) {
       const state = window.history.state;
-      if (state?.jellyChat && nav.current.scope.kind !== "project")
-        window.history.replaceState({ ...state, jellyChat: false }, "");
+      const fromRoot = nav.current.scope.kind !== "project";
+      // Destination entries intentionally retain workspace scope. Mark this
+      // actual inbox root explicitly so project Back restores it instead.
+      if (fromRoot)
+        window.history.replaceState({ ...state, jellyProject: null, jellyProjectEntry: false, jellyChat: false }, "");
       const next = { ...window.history.state, jellyProject: id, jellyProjectEntry: true, jellyChat: false };
-      if (state?.jellyProjectEntry && !state?.jellyChat) window.history.replaceState(next, "");
-      else window.history.pushState(next, "");
+      if (!fromRoot && state?.jellyProjectEntry && !state?.jellyChat) window.history.replaceState(next, "", "/agents");
+      else window.history.pushState(next, "", "/agents");
     }
     switchScope({ kind: "project", projectId: id });
     setListOpen(true);
@@ -1250,17 +1307,41 @@ export function App() {
       setListOpen(true);
     }
   }
-  function openInboxAgent(id: string) {
+  function openInboxAgent(id: string, fromLink = false) {
     const target = data?.agents.find(a => a.id === id);
-    if (target?.projectId && (scope.kind !== "project" || scope.projectId !== target.projectId)) openProject(target.projectId);
-    select(id);
+    if (fromLink) {
+      const next: Scope = target?.projectId ? { kind: "project", projectId: target.projectId } : { kind: "all" };
+      if (scopeKey(next) !== scopeKey(nav.current.scope)) switchScope(next, id);
+    } else if (target?.projectId && (scope.kind !== "project" || scope.projectId !== target.projectId)) openProject(target.projectId);
+    select(id, fromLink);
   }
-  async function createAgent() {
-    if (!connected || creationPending.current) return;
+  useEffect(() => {
+    if (active && explicitAgentId && data?.agents.some(agent => agent.id === explicitAgentId)) openInboxAgent(explicitAgentId, true);
+  }, [explicitNavigationId, explicitAgentId, data?.instance.id]);
+  useLayoutEffect(() => {
+    // Inactive layers retain their geometry and mounted state; restore the
+    // reader's anchor rather than following background work when returning.
+    if (!active) { rememberScroll(); composerInput.current?.blur(); return; }
+    const saved = scrollMemory.current.get(selected);
+    if (conversation.current && saved) conversation.current.scrollTop = saved.top;
+  }, [active]);
+  function prepareAppDraft(id: string) {
+    if (!intent) return;
+    openInboxAgent(id);
+    const text = appIntentDraft(intent.app);
+    setDrafts(current => ({ ...current, [id]: `${current[id] ?? ""}${current[id] ? "\n\n" : ""}${text}` }));
+    appDraftFocus.current = id;
+    onIntentDone();
+  }
+  async function createAgent(forAppProject?: string | null) {
+    if (!connected || creationPending.current) {
+      if (forAppProject !== undefined) throw new Error(!connected ? "Reconnect to Jelly before creating an agent." : "Another agent is being created. Wait, then retry.");
+      return;
+    }
     creationPending.current = true;
     setCreatingAgent(true);
     setCreationError("");
-    const targetScope = nav.current.scope;
+    const targetScope: Scope = forAppProject === undefined ? nav.current.scope : forAppProject ? { kind: "project", projectId: forAppProject } : { kind: "all" };
     try {
       const created = await post<AgentRecord>("/agents", {
         name: DEFAULT_AGENT_NAME,
@@ -1271,13 +1352,19 @@ export function App() {
         projectId: targetScope.kind === "project" ? targetScope.projectId : null,
       });
       if (mobile && listOpen && !window.history.state?.jellyChat)
-        window.history.pushState({ ...window.history.state, jellyChat: true }, "");
+        window.history.pushState({ ...window.history.state, jellyChat: true, jellyChatOwner: chatHistoryOwner }, "");
       switchScope(targetScope, created.id);
       setListOpen(false);
       setModal(null);
       setAnnouncement("New Agent created");
+      if (forAppProject !== undefined && intent) {
+        setDrafts(current => ({ ...current, [created.id]: appIntentDraft(intent.app) }));
+        appDraftFocus.current = created.id;
+        onIntentDone();
+      }
     } catch (error) {
       setCreationError((error as Error).message);
+      if (forAppProject !== undefined) throw error;
     } finally {
       creationPending.current = false;
       setCreatingAgent(false);
@@ -1447,7 +1534,7 @@ export function App() {
           selectedId={agent?.id}
           unread={unreadAgents}
           connected={connected}
-          visible={!mobile || listOpen}
+          visible={active && (!mobile || listOpen)}
           dark={resolved === "dark"}
           onProject={openProject}
           onBack={backToProjects}
@@ -1917,6 +2004,7 @@ export function App() {
         <ComputerPanel
           key={computerOpen}
           agentId={computerOpen}
+          navigationNotice={navigationNotice}
           onClose={() => setComputerOpen(null)}
           onChange={() => void refresh.current()}
         />
@@ -1993,6 +2081,9 @@ export function App() {
           }}
         />
       )}
+      {active && intent && data && <AppBuilder key={intent.id} intent={intent} data={data} connected={connected} onClose={onIntentDone} onChoose={prepareAppDraft} onCreate={projectId => createAgent(projectId)} onProject={project => {
+        setData(current => current ? { ...current, projects: [...current.projects.filter(item => item.id !== project.id), project] } : current);
+      }} />}
       {modal === "settings" && data && (
         <Settings
           data={data}
@@ -2004,4 +2095,97 @@ export function App() {
       )}
     </div>
   );
+}
+
+/** Destination layers stay mounted: Apps must never reset ongoing agent work. */
+export function App() {
+  const [workspace, setWorkspace] = useState<Snapshot | null>(null);
+  const [privateSheetOpen, setPrivateSheetOpen] = useState(false);
+  const [mobileNavigation, setMobileNavigation] = useState(() => window.matchMedia("(max-width:767px)").matches);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width:767px)");
+    const update = () => setMobileNavigation(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  const { location, navigate, viewer, reportRoute, destinationReady, navigationNotice } = useAppsNavigation(workspace?.instance.id ?? "", privateSheetOpen);
+  const [capabilities, setCapabilities] = useState<AppsCapabilities | null>(null);
+  const [changedApp, setChangedApp] = useState<AppRecord | null>(null);
+  const [revision, setRevision] = useState(0);
+  const [details, setDetails] = useState<AppRecord | null>(null);
+  const [removing, setRemoving] = useState<AppRecord | null>(null);
+  const [intent, setIntent] = useState<AppIntent | null>(null);
+  const [failure, setFailure] = useState<{ message: string; retry: () => void } | null>(null);
+  const lifecyclePending = useRef(new Set<string>());
+  const shell = useRef<HTMLDivElement>(null);
+  useInputModality(shell);
+  useEffect(() => {
+    const update = () => setRevision(value => value + 1);
+    window.addEventListener("jelly:apps-updated", update);
+    return () => window.removeEventListener("jelly:apps-updated", update);
+  }, []);
+  function changed(app: AppRecord) {
+    setChangedApp(app);
+    setDetails(current => current?.id === app.id ? app : current);
+  }
+  function build(app: AppRecord | null) {
+    setDetails(null);
+    navigate("agents");
+    setIntent({ app, id: requestId() });
+  }
+  function launch(app: AppRecord, forceDirect = false, existingNavigationId?: string) {
+    const navigationId = existingNavigationId ?? requestId();
+    const origin = appOrigin(app);
+    const direct = (forceDirect || ((app.managementMode === "linked" || app.launchMode === "direct") && !appException(app))) && !!origin;
+    changed({ ...app, lastOpenedAt: new Date().toISOString() });
+    if (direct) {
+      // Open synchronously with the user's gesture; never permit opener access.
+      window.open(`${origin}${existingNavigationId && location.appId === app.id ? location.route : "/"}`, "_blank", "noopener,noreferrer");
+    } else if (!existingNavigationId) {
+      setDetails(null);
+      viewer(app.id, navigationId);
+    }
+    void recordAppLaunch(app.id, navigationId).then(changed).catch(error => {
+      if (!direct) return; // Viewer owns embedded-entry recovery with this same ID.
+      setFailure({ message: `Visit could not be saved. ${(error as Error).message}`, retry: () => {
+        void recordAppLaunch(app.id, navigationId).then(record => { changed(record); setFailure(null); }).catch(error => setFailure(current => current ? { ...current, message: (error as Error).message } : current));
+      } });
+    });
+  }
+  async function lifecycle(app: AppRecord, action: "start" | "stop" | "restart") {
+    if (lifecyclePending.current.has(app.id)) return;
+    lifecyclePending.current.add(app.id); setFailure(null);
+    try { changed(await appsApi.control(app.id, action)); }
+    catch (error) { setFailure({ message: `${action} failed: ${(error as Error).message}`, retry: () => void lifecycle(app, action) }); }
+    finally { lifecyclePending.current.delete(app.id); }
+  }
+  function openAgent(id: string) {
+    setDetails(null);
+    window.history.pushState({ jellyAgent: id, jellyChat: true }, "", `/agents/${encodeURIComponent(id)}`);
+    window.dispatchEvent(new window.PopStateEvent("popstate"));
+  }
+  const viewing = location.destination === "viewer" && !!location.appId;
+  const destinationNavigation = !viewing && <nav className="destination-navigation" aria-label="Jelly destinations">
+    <a href="/agents" aria-current={location.destination === "agents" ? "page" : undefined} onClick={event => { if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); navigate("agents"); } }}>Agents</a>
+    <a href="/apps" aria-current={location.destination === "apps" ? "page" : undefined} onClick={event => { if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); navigate("apps"); } }}>Apps</a>
+  </nav>;
+  return <div className="jelly-destinations" data-destination={location.destination} ref={shell}>
+    {!mobileNavigation && !viewing && <aside className="destination-sidebar" aria-label="Jelly navigation">{destinationNavigation}</aside>}
+    <div className="destination-body">
+      <div className="destination-layer agents-layer" data-active={location.destination === "agents"} inert={location.destination !== "agents"} aria-hidden={location.destination !== "agents"}>
+        <AgentsWorkspace active={location.destination === "agents"} destinationReady={destinationReady} explicitAgentId={location.agentId} explicitNavigationId={location.navigationId} navigationNotice={navigationNotice} onPrivateSheet={setPrivateSheetOpen} intent={intent} onIntentDone={() => setIntent(null)} onSnapshot={setWorkspace} />
+      </div>
+      <div className="destination-layer apps-layer" data-active={location.destination === "apps"} inert={location.destination !== "apps"} aria-hidden={location.destination !== "apps"}>
+        <AppsHome active={location.destination === "apps"} focusAppId={location.focusAppId} revision={revision} changedApp={changedApp} onCapabilities={setCapabilities} onLaunch={launch} onDetails={setDetails} onEdit={app => build(app)} onBuild={() => build(null)} onControl={(app, action) => void lifecycle(app, action)} onRemove={setRemoving} />
+      </div>
+      {viewing && <AppViewer key={location.navigationId} appId={location.appId!} navigationId={location.navigationId} route={location.route} capabilities={capabilities} changedApp={changedApp} revision={revision} onHome={() => navigate("apps", location.appId)} onChanged={changed} onCapabilities={setCapabilities} onRoute={reportRoute} onDetails={setDetails} onNewTab={(app, navigationId) => launch(app, true, navigationId)} onEdit={app => build(app)} onControl={(app, action) => void lifecycle(app, action)} onRemove={setRemoving} />}
+    </div>
+    {mobileNavigation && destinationNavigation}
+    {failure && <div className="apps-operation-error" role="alert">{failure.message}<button className="secondary" onClick={failure.retry}>Retry</button><button className="secondary" onClick={() => setFailure(null)}>Dismiss</button></div>}
+    {details && <AppDetails key={details.id} app={details} onChanged={changed} capabilities={capabilities} agents={workspace?.agents ?? []} projects={workspace?.projects ?? []} onClose={() => setDetails(null)} onAgent={openAgent} onNewTab={() => launch(details, true, viewing ? location.navigationId : undefined)} onEdit={() => build(details)} onControl={action => void lifecycle(details, action)} onRemove={() => { setRemoving(details); setDetails(null); }} />}
+    {removing && <RemoveApp app={removing} onClose={() => setRemoving(null)} onRemoved={() => {
+      setRemoving(null); setDetails(null); setChangedApp(null); setRevision(value => value + 1);
+      navigate("apps");
+    }} />}
+  </div>;
 }

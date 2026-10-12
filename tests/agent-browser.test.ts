@@ -32,7 +32,7 @@ test("browser controller setting survives database reopen and migration", () => 
     store = new Store(path);
     expect(store.instance().browserBackend).toBe("playwright");
     store.db.exec(
-      "ALTER TABLE instance DROP COLUMN browserBackend; PRAGMA user_version=11;",
+      "ALTER TABLE instance DROP COLUMN browserBackend; DROP TABLE app_icon_assets; DROP TABLE app_launches; DROP TABLE apps; DROP TABLE app_resources; DROP TABLE app_ports; DROP TABLE app_locks; DROP TABLE app_releases; PRAGMA user_version=11;",
     );
     store.close();
     store = new Store(path);

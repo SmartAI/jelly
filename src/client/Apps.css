@@ -1,0 +1,1541 @@
+/* Apps and the shared Apps/Agents bar. Restrained native surfaces: a
+   segmented destination control, a launcher library, grouped sheets, and the
+   same floating material as the Agents workspace header. */
+:is(.jelly-destinations, .apps-menu, .native-sheet) {
+  --apps-tint: color-mix(in srgb, var(--accent) 14%, transparent);
+  --apps-tint-text: color-mix(in srgb, var(--accent) 86%, var(--text));
+  --apps-segment-thumb: #4a4a4f;
+  --apps-menu-gap: var(--page);
+  --apps-icon-edge: rgb(255 255 255 / 9%);
+}
+:root[data-theme="light"] :is(.jelly-destinations, .apps-menu, .native-sheet) {
+  --apps-tint: color-mix(in srgb, var(--accent) 10%, transparent);
+  --apps-segment-thumb: #fff;
+  --apps-menu-gap: var(--surface);
+  --apps-icon-edge: rgb(0 0 0 / 8%);
+}
+.jelly-destinations {
+  --destination-nav-height: calc(64px + env(safe-area-inset-bottom));
+  height: 100dvh;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--page);
+}
+.destination-navigation {
+  height: var(--destination-nav-height);
+  flex: 0 0 var(--destination-nav-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin: 0;
+  padding: 8px max(16px, env(safe-area-inset-right))
+    calc(8px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  border-top: 1px solid var(--border);
+  background: var(--page);
+  box-shadow: inset 0 6px 10px -8px rgb(0 0 0 / 38%);
+}
+/* One rounded track; the current destination sits on a raised thumb. */
+.destination-navigation a {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 1 128px;
+  min-width: 88px;
+  height: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 16px;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.destination-navigation a:first-child {
+  border-radius: 12px 0 0 12px;
+}
+.destination-navigation a:last-child {
+  border-radius: 0 12px 12px 0;
+}
+.destination-navigation a::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  z-index: -1;
+  border-radius: 9px;
+  background: var(--apps-segment-thumb);
+  box-shadow:
+    0 3px 8px rgb(0 0 0 / 12%),
+    0 1px 1px rgb(0 0 0 / 4%);
+  opacity: 0;
+  transform: scale(0.94);
+  transition:
+    opacity 180ms ease,
+    transform 220ms cubic-bezier(0.22, 0.7, 0.2, 1);
+}
+.destination-navigation a[aria-current] {
+  font-weight: 600;
+}
+.destination-navigation a[aria-current]::before {
+  opacity: 1;
+  transform: none;
+}
+.destination-navigation a:not([aria-current]):active::before {
+  opacity: 0.6;
+  transform: none;
+}
+@media (hover: hover) {
+  .destination-navigation a:not([aria-current]):hover::before {
+    opacity: 0.5;
+    transform: none;
+  }
+}
+.destination-navigation a:focus-visible,
+.app-details a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.destination-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.destination-layer {
+  position: absolute;
+  inset: 0;
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 160ms ease,
+    visibility 0s;
+}
+.destination-layer[data-active="false"] {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 160ms ease,
+    visibility 0s 160ms;
+}
+/* Keep hidden chats at the same height even in the full-screen viewer. */
+.agents-layer {
+  height: calc(100dvh - var(--destination-nav-height));
+}
+.agents-layer > .app {
+  height: 100%;
+}
+.agents-layer > .app > .sidebar {
+  padding-top: max(22px, env(safe-area-inset-top));
+}
+.agents-layer .agent-create-fab {
+  bottom: 20px;
+}
+.agents-layer .sidebar .inbox-pane {
+  padding-bottom: 100px;
+  scroll-padding-bottom: 100px;
+}
+.destination-layer[inert] .spin,
+.destination-layer[inert] .agent-avatar::after,
+.destination-layer[inert] .work-status-sheen {
+  animation-play-state: paused;
+}
+
+/* Desktop navigation lives at the top of the persistent sidebar rail. The
+   overlay is transparent over the existing Agents inbox below its controls. */
+@media (min-width: 768px) {
+  .jelly-destinations {
+    --desktop-sidebar-width: 280px;
+    --destination-nav-height: calc(64px + env(safe-area-inset-top));
+    display: block;
+  }
+  .destination-body {
+    height: 100%;
+  }
+  .destination-sidebar {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 5;
+    width: var(--desktop-sidebar-width);
+    border-right: 1px solid var(--border);
+    pointer-events: none;
+  }
+  .jelly-destinations[data-destination="apps"] .destination-sidebar {
+    background: var(--sidebar);
+  }
+  .destination-sidebar .destination-navigation {
+    pointer-events: auto;
+    padding-top: calc(8px + env(safe-area-inset-top));
+    padding-bottom: 8px;
+    border-top: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--sidebar);
+    box-shadow: none;
+  }
+  .agents-layer {
+    height: 100%;
+  }
+  .agents-layer > .app > .sidebar {
+    padding-top: calc(var(--destination-nav-height) + 22px);
+  }
+  .apps-layer {
+    left: var(--desktop-sidebar-width);
+  }
+  .agents-layer .agent-create-fab {
+    bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+  .agents-layer .sidebar .inbox-pane {
+    padding-bottom: calc(100px + env(safe-area-inset-bottom));
+    scroll-padding-bottom: calc(100px + env(safe-area-inset-bottom));
+  }
+  .jelly-destinations .apps-operation-error {
+    left: calc(var(--desktop-sidebar-width) + 12px);
+    bottom: max(12px, env(safe-area-inset-bottom));
+  }
+  .jelly-destinations[data-destination="viewer"] .apps-operation-error {
+    left: max(12px, env(safe-area-inset-left));
+  }
+}
+@media (min-width: 1440px) {
+  .jelly-destinations {
+    --desktop-sidebar-width: 304px;
+  }
+}
+
+/* Home: a personal app library. */
+.apps-home {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: var(--page);
+}
+.apps-home-content {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: max(12px, env(safe-area-inset-top))
+    max(16px, env(safe-area-inset-right)) 40px
+    max(16px, env(safe-area-inset-left));
+}
+.apps-home :is(button, input) {
+  min-height: 44px;
+}
+.apps-home .apps-home-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-height: 44px;
+  height: auto;
+  margin: 4px 0 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.apps-home-header h1 {
+  min-width: 0;
+  margin: 0;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 36px;
+  letter-spacing: -0.025em;
+}
+/* Receives focus for announcements, not interaction. */
+.apps-home-header h1:focus {
+  outline: none;
+}
+/* A tinted capsule inside a full 44px target. */
+.apps-home .apps-build {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--apps-tint-text);
+  -webkit-tap-highlight-color: transparent;
+}
+.apps-build > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 16px 0 12px;
+  border-radius: 18px;
+  background: var(--apps-tint);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  transition:
+    background var(--duration-quick, 120ms) ease,
+    opacity var(--duration-quick, 120ms) ease;
+}
+.apps-home .apps-build:focus-visible {
+  outline: none;
+}
+.apps-home .apps-build:focus-visible > span {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.apps-build:active:not(:disabled) > span {
+  opacity: 0.7;
+}
+@media (hover: hover) {
+  .apps-build:hover > span {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+}
+.apps-search {
+  position: relative;
+  display: block;
+  margin: 0;
+  color: var(--muted);
+}
+.apps-search > svg {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.apps-home .apps-search input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  margin: 0;
+  padding: 0 12px 0 38px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 16px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.apps-search input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+.apps-home .apps-search input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+.apps-home h2 {
+  margin: 28px 0 12px;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+}
+.apps-starred-grid,
+.apps-history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.apps-starred-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px 6px;
+}
+.app-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  text-align: center;
+}
+.app-launch {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+}
+.apps-home .app-launch:active:not(:disabled) {
+  translate: none;
+}
+.app-tile .app-launch {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px 0;
+  border-radius: 16px;
+}
+/* Rounded-square icons; true continuous corners where the browser can draw them. */
+.app-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 64px;
+  height: 64px;
+  border-radius: 23%;
+  overflow: hidden;
+  color: #fff;
+  font-size: 28px;
+  font-weight: 600;
+  background-image: linear-gradient(
+    180deg,
+    rgb(255 255 255 / 14%),
+    rgb(255 255 255 / 0%) 65%
+  );
+  box-shadow: 0 1px 2px rgb(0 0 0 / 10%);
+  transition:
+    transform 160ms ease,
+    filter 160ms ease;
+}
+.app-icon::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--apps-icon-edge, transparent);
+  pointer-events: none;
+}
+@supports (corner-shape: squircle) {
+  .app-icon {
+    border-radius: 34%;
+    corner-shape: squircle;
+  }
+  .app-icon::after {
+    corner-shape: squircle;
+  }
+}
+.app-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.app-launch:active:not(:disabled) .app-icon {
+  transform: scale(0.94);
+  filter: brightness(0.92);
+}
+.app-launch-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+.app-launch-copy strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.app-tile .app-launch-copy strong {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+.app-tile .app-exception {
+  font-size: 11px;
+  line-height: 15px;
+}
+.app-exception {
+  color: var(--error);
+}
+.app-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.app-tile .app-row-actions {
+  margin-top: -2px;
+}
+.app-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  -webkit-tap-highlight-color: transparent;
+}
+.app-action svg {
+  width: 20px;
+  height: 20px;
+}
+.app-action[aria-pressed] svg {
+  width: 19px;
+  height: 19px;
+}
+.app-history-row .app-action[aria-pressed="true"] {
+  color: var(--accent);
+}
+.app-tile .app-action svg {
+  width: 17px;
+  height: 17px;
+}
+.app-action[aria-busy="true"] {
+  opacity: 0.5;
+}
+.app-action:active:not(:disabled) {
+  background: var(--hover);
+}
+@media (hover: hover) {
+  .app-action:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .app-history-row .app-launch:hover {
+    background: var(--hover);
+  }
+  .app-tile .app-launch:hover .app-icon {
+    filter: brightness(1.05);
+  }
+}
+.app-star-error {
+  margin: 2px 0 0;
+  color: var(--error);
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.app-star-error button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: inherit;
+}
+.app-tile .app-star-error {
+  font-size: 12px;
+  text-align: center;
+}
+.app-tile .app-star-error button {
+  font-size: 12px;
+}
+/* History matches the Agents inbox: plain rows with inset separators. */
+.app-history-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 4px;
+  min-width: 0;
+}
+.apps-history-list > li + li::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 56px;
+  right: 0;
+  height: 1px;
+  background: var(--border);
+}
+.app-history-row .app-launch {
+  display: flex;
+  align-items: center;
+  flex: 1 1 0;
+  gap: 12px;
+  margin-left: -8px;
+  padding: 10px 8px;
+  border-radius: 12px;
+  text-align: left;
+}
+.app-history-row .app-icon {
+  width: 44px;
+  height: 44px;
+  font-size: 20px;
+}
+.app-history-row .app-launch-copy {
+  flex: 1;
+}
+.app-history-row .app-launch-copy strong {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 21px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.app-launch-meta {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 18px;
+}
+.app-launch-meta .app-exception::before {
+  content: "·";
+  margin-right: 4px;
+  color: var(--muted);
+}
+.app-history-row .app-row-actions {
+  margin-right: -10px;
+}
+.app-history-row .app-star-error {
+  flex-basis: 100%;
+  margin: -6px 0 4px;
+  padding-left: 56px;
+}
+.apps-star-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 24px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.4;
+}
+.apps-star-hint svg {
+  flex-shrink: 0;
+}
+.apps-home .apps-load-more {
+  display: flex;
+  align-items: center;
+  margin: 20px auto 0;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 22px;
+  background: var(--apps-tint);
+  color: var(--apps-tint-text);
+  font-size: 15px;
+  font-weight: 600;
+}
+.apps-loading,
+.apps-no-results {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 56px 16px;
+  color: var(--muted);
+  font-size: 15px;
+  text-align: center;
+}
+.apps-no-results p {
+  margin: 0;
+}
+.apps-home .apps-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 12px;
+  margin: 16px 0 0;
+  padding: 4px 6px 4px 16px;
+  border-radius: 14px;
+  background: var(--error-bg);
+  color: var(--error);
+  font-size: 14px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.apps-home .apps-error .secondary {
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--error);
+  font-weight: 600;
+}
+.apps-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 56px 16px 32px;
+  text-align: center;
+}
+.apps-empty img {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+}
+.apps-home .apps-empty h2 {
+  margin: 16px 0 6px;
+  font-size: 22px;
+}
+.apps-empty p {
+  max-width: 32ch;
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.45;
+}
+.apps-home .apps-empty .primary {
+  padding: 0 22px;
+  border-radius: 22px;
+  background: var(--button);
+  color: var(--button-text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* Overflow: an iOS-style context menu with grouped actions. */
+.apps-menu {
+  position: fixed;
+  z-index: 50;
+  width: 250px;
+  max-width: calc(100vw - 24px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--floating, var(--page));
+  color: var(--text);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 18%);
+  font-size: 16px;
+  line-height: 1.3;
+  transform-origin: top right;
+  animation: agent-menu-in 160ms ease-out;
+}
+.apps-menu [role="menuitem"] {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 11px 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.apps-menu [role="menuitem"] + [role="menuitem"] {
+  border-top: 1px solid var(--border);
+}
+.apps-menu [role="menuitem"] > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.apps-menu [role="menuitem"] > svg {
+  flex-shrink: 0;
+}
+.apps-menu [role="menuitem"]:active:not(:disabled) {
+  translate: none;
+  background: var(--hover);
+}
+@media (hover: hover) {
+  .apps-menu [role="menuitem"]:hover {
+    background: var(--hover);
+  }
+}
+.apps-menu [role="menuitem"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+  background: var(--hover);
+}
+.apps-menu .apps-menu-destructive {
+  color: var(--error);
+}
+.apps-menu-separator {
+  height: 8px;
+  background: var(--apps-menu-gap);
+}
+.apps-menu-heading {
+  padding: 10px 16px 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Viewer: the app owns the screen; Jelly keeps one small floating pill. */
+.app-viewer {
+  position: absolute;
+  inset: 0;
+  background: var(--page);
+  overflow: hidden;
+}
+.app-viewer > iframe {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border: 0;
+  background: white;
+}
+.viewer-home-controls {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 23px;
+  background: color-mix(in srgb, var(--floating, var(--page)) 88%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  backdrop-filter: blur(16px) saturate(1.6);
+  box-shadow:
+    0 6px 20px rgb(0 0 0 / 14%),
+    0 1px 3px rgb(0 0 0 / 10%);
+  color: var(--text);
+}
+.viewer-home-controls[data-corner^="top"] {
+  top: max(12px, calc(env(safe-area-inset-top) + 6px));
+}
+.viewer-home-controls[data-corner^="bottom"] {
+  bottom: max(12px, calc(env(safe-area-inset-bottom) + 6px));
+}
+.viewer-home-controls[data-corner$="left"] {
+  left: max(12px, calc(env(safe-area-inset-left) + 6px));
+}
+.viewer-home-controls[data-corner$="right"] {
+  right: max(12px, calc(env(safe-area-inset-right) + 6px));
+}
+.viewer-home-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 14px 0 10px;
+  border: 0;
+  border-radius: 22px;
+  background: transparent;
+  color: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+.viewer-home-pill img {
+  width: 24px;
+  height: 24px;
+}
+.viewer-home-pill:active:not(:disabled) {
+  background: var(--hover);
+}
+@media (hover: hover) {
+  .viewer-home-pill:hover {
+    background: var(--hover);
+  }
+}
+.viewer-home-controls .app-action {
+  position: relative;
+  border-radius: 22px;
+  color: inherit;
+}
+.viewer-home-controls .app-action::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 1px;
+  background: var(--border);
+}
+.viewer-recovery {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  padding: max(84px, calc(env(safe-area-inset-top) + 72px))
+    max(24px, env(safe-area-inset-right))
+    max(84px, calc(env(safe-area-inset-bottom) + 72px))
+    max(24px, env(safe-area-inset-left));
+  background: var(--page);
+}
+/* Auto margins centre short content yet keep tall content scrollable. */
+.viewer-recovery-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 440px;
+  margin: auto;
+  text-align: center;
+}
+.viewer-recovery .app-icon,
+.viewer-recovery-placeholder {
+  width: 80px;
+  height: 80px;
+  font-size: 34px;
+}
+.viewer-recovery-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 23%;
+  background: var(--surface);
+  color: var(--muted);
+}
+@supports (corner-shape: squircle) {
+  .viewer-recovery-placeholder {
+    border-radius: 34%;
+    corner-shape: squircle;
+  }
+}
+.viewer-recovery h1 {
+  margin: 20px 0 8px;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+.viewer-recovery p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.viewer-recovery p[role="alert"] {
+  color: var(--error);
+  overflow-wrap: anywhere;
+}
+.viewer-recovery ul {
+  width: 100%;
+  margin: 16px 0 0;
+  padding: 12px 16px 12px 32px;
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+}
+.viewer-recovery .apps-detail-actions {
+  width: 100%;
+  max-width: 320px;
+  margin-top: 28px;
+}
+.viewer-frame-fallback,
+.viewer-launch-error,
+.apps-operation-error {
+  position: absolute;
+  z-index: 6;
+  left: max(12px, env(safe-area-inset-left));
+  right: max(12px, env(safe-area-inset-right));
+  max-width: 520px;
+  max-height: calc(100dvh - 180px);
+  margin-inline: auto;
+  overflow: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--floating, var(--page)) 94%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  backdrop-filter: blur(16px) saturate(1.6);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 18%);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.viewer-frame-fallback {
+  bottom: calc(76px + env(safe-area-inset-bottom));
+}
+.viewer-frame-fallback p {
+  margin: 0 0 12px;
+}
+.viewer-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.viewer-launch-error,
+.apps-operation-error {
+  top: calc(76px + env(safe-area-inset-top));
+  color: var(--error);
+  font-weight: 500;
+}
+.apps-operation-error {
+  top: auto;
+  bottom: calc(var(--destination-nav-height) + 12px);
+}
+:is(.viewer-frame-fallback, .viewer-launch-error, .apps-operation-error)
+  button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 22px;
+  background: var(--apps-tint);
+  color: var(--apps-tint-text);
+  font-size: 15px;
+  font-weight: 600;
+}
+:is(.viewer-launch-error, .apps-operation-error) button {
+  margin: 10px 8px 0 0;
+}
+.viewer-frame-fallback .primary {
+  background: var(--button);
+  color: var(--button-text);
+}
+
+/* Large stacked actions for sheets and recovery: primary first, like native
+   alerts and confirmation sheets. */
+.apps-detail-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  margin: 24px 0 0;
+}
+.apps-detail-actions > button {
+  min-height: 50px;
+  margin: 0;
+  padding: 12px 20px;
+  border: 0;
+  border-radius: 14px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow-wrap: break-word;
+}
+.apps-detail-actions > .primary {
+  background: var(--button);
+  color: var(--button-text);
+}
+.apps-detail-actions > .secondary {
+  background: var(--apps-tint);
+  color: var(--apps-tint-text);
+}
+.viewer-recovery .apps-detail-actions > .secondary {
+  min-height: 44px;
+  font-size: 16px;
+}
+dialog .apps-detail-actions > .secondary {
+  min-height: 44px;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 400;
+}
+
+/* Apps sheets reuse the grouped Settings language. */
+dialog.apps-sheet .modal-body {
+  background: var(--surface);
+}
+dialog .apps-sheet-message {
+  margin: 0 4px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.5;
+}
+dialog .apps-sheet-footnote {
+  margin: 8px 16px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+dialog.apps-sheet .modal-body > .error-text {
+  margin: 12px 4px 0;
+}
+.apps-sheet .settings-group {
+  margin-bottom: 0;
+}
+.apps-sheet .settings-section {
+  margin: 0 0 24px;
+}
+dialog.apps-sheet .settings-footnote {
+  margin: 8px 16px 0;
+}
+dialog label.apps-uninstall {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 52px;
+  margin: 16px 0 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--page);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+dialog .apps-uninstall input[type="checkbox"] {
+  display: block;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.apps-uninstall span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: normal;
+}
+
+/* Builder: native pop-up rows inside grouped lists. */
+.apps-sheet .apps-builder-group {
+  margin-top: 16px;
+}
+.apps-builder-group > * + *::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  height: 1px;
+  background: var(--border);
+}
+dialog label.apps-select-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  margin: 0;
+  padding: 4px 16px;
+  color: var(--text);
+  font-size: 16px;
+}
+.apps-select-row > span {
+  flex-shrink: 0;
+}
+dialog .apps-select-row select {
+  display: block;
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 64%;
+  min-height: 44px;
+  margin: 0 0 0 auto;
+  padding: 8px 26px 8px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  text-align: right;
+  text-align-last: right;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+dialog .apps-select-row select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+.apps-select-row > svg {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+dialog .apps-row-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  margin: 0;
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 16px;
+  text-align: left;
+}
+dialog .apps-row-button:active:not(:disabled) {
+  translate: none;
+  background: var(--hover);
+}
+
+/* Details: icon header, quick actions, then grouped facts. */
+.app-details-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px 20px;
+  text-align: center;
+}
+.app-details-hero .app-icon {
+  width: 76px;
+  height: 76px;
+  font-size: 34px;
+}
+.app-details-hero > p {
+  max-width: 36ch;
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.45;
+  overflow-wrap: break-word;
+}
+.app-details-hero > p.error-text {
+  color: var(--error);
+  font-size: 13px;
+}
+dialog label.app-icon-picker {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 15px;
+  cursor: pointer;
+}
+dialog.app-details .app-icon-picker input[type="file"] {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  pointer-events: none;
+}
+.app-icon-picker-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 18px;
+  background: var(--apps-tint);
+  color: var(--apps-tint-text);
+  font-weight: 600;
+}
+.app-icon-picker:has(input:focus-visible) .app-icon-picker-button {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.app-icon-picker:has(input:disabled) {
+  opacity: 0.5;
+  cursor: progress;
+}
+.app-icon-picker small {
+  display: block;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.app-details-quick {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin: 0 0 24px;
+}
+.settings-section > .app-details-quick {
+  margin: 0;
+}
+dialog .app-quick-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 64px;
+  margin: 0;
+  padding: 10px 6px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--page);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+}
+.app-quick-action > span {
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
+dialog .app-quick-action:active:not(:disabled) {
+  translate: none;
+  background: var(--hover);
+}
+@media (hover: hover) {
+  dialog .app-quick-action:hover:not(:disabled),
+  dialog .apps-row-button:hover:not(:disabled) {
+    background: var(--hover);
+  }
+}
+.app-details-list {
+  margin: 0;
+}
+.app-details-list > div {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  align-items: baseline;
+  column-gap: 16px;
+  min-height: 48px;
+  padding: 12px 16px;
+}
+.app-details-list > div + div::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  height: 1px;
+  background: var(--border);
+}
+.app-details dt {
+  min-width: 0;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.4;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.app-details dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.4;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.app-details dd.app-status-exception {
+  color: var(--error);
+}
+.app-details dd a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.app-details dd code {
+  font:
+    14px/1.4 ui-monospace,
+    SFMono-Regular,
+    monospace;
+}
+dialog .app-text-button {
+  min-height: 44px;
+  margin: -10px 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 16px;
+  text-align: inherit;
+  overflow-wrap: anywhere;
+}
+.app-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 12px 16px;
+  color: var(--text);
+  font-size: 16px;
+  list-style: none;
+  cursor: pointer;
+}
+.app-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.app-disclosure > summary > span {
+  flex: 1;
+  min-width: 0;
+}
+.app-disclosure > summary > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform 160ms ease;
+}
+.app-disclosure[open] > summary > svg {
+  transform: rotate(90deg);
+}
+.app-disclosure > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+  border-radius: 14px;
+}
+.apps-sheet .app-disclosure {
+  margin-bottom: 12px;
+}
+.app-disclosure-body {
+  margin: 0;
+  padding: 0 0 16px;
+  border-top: 1px solid var(--border);
+}
+.app-disclosure-body > :is(p, pre, button) {
+  margin-inline: 16px;
+}
+.app-disclosure-body > p {
+  margin-block: 12px 0;
+}
+.app-disclosure-body > .subtle {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.app-disclosure-body .error-text button {
+  min-height: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+dialog .app-disclosure-body > .secondary {
+  margin-top: 12px;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--apps-tint);
+  color: var(--apps-tint-text);
+  font-size: 15px;
+  font-weight: 600;
+}
+ul.app-disclosure-body {
+  padding: 12px 16px 14px 34px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.apps-logs {
+  max-height: 300px;
+  margin-top: 12px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--surface);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font:
+    12px/1.5 ui-monospace,
+    SFMono-Regular,
+    monospace;
+}
+.apps-sheet .app-details-remove-group {
+  margin-top: 24px;
+}
+.app-details .app-details-remove {
+  color: var(--error);
+}
+@media (max-width: 480px) {
+  /* Contacts-style rows: a small label stacked above its value. */
+  .app-details-list > div {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 2px;
+    padding-block: 10px;
+  }
+  .app-details dt {
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .app-details dd {
+    color: var(--text);
+    text-align: left;
+  }
+}
+@media (min-width: 600px) {
+  .apps-starred-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 22px 16px;
+  }
+}
+@media (min-width: 900px) {
+  .apps-starred-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 24px 16px;
+  }
+  .apps-home-content {
+    padding-inline: 32px;
+  }
+  .app-tile .app-icon {
+    width: 72px;
+    height: 72px;
+    font-size: 32px;
+  }
+  .app-tile .app-launch-copy strong {
+    font-size: 14px;
+    line-height: 18px;
+  }
+  /* Two columns keep wide History rows from stretching across the page. */
+  .apps-history-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 40px;
+  }
+  .apps-history-list > li:nth-child(2)::before {
+    display: none;
+  }
+}
+@media (max-width: 767px) {
+  /* A conversation is a focused mobile page; Back returns to the inbox tabs.
+     Preserve this full chat geometry even while the workspace is inactive. */
+  .jelly-destinations[data-destination="agents"]:has(
+      .agents-layer > .app.show-chat
+    )
+    > .destination-navigation {
+    display: none;
+  }
+  .agents-layer:has(> .app.show-chat) {
+    height: 100dvh;
+  }
+  .agents-layer > .app.show-chat .composer-wrap {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+  .agents-layer > .app.show-chat[data-keyboard-open="true"] .composer-wrap {
+    padding-bottom: 12px;
+  }
+  /* Existing mobile chat CSS is viewport-absolute; contain it within its layer. */
+  .agents-layer > .app {
+    position: relative;
+    height: 100%;
+  }
+  .agents-layer > .app > :is(.sidebar, main) {
+    height: 100%;
+  }
+  /* Content owns the top safe area; navigation owns the home indicator inset. */
+  .agents-layer > .app > .sidebar {
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-bottom: 16px;
+  }
+  .agents-layer > .app > main {
+    --conversation-top: calc(68px + max(12px, env(safe-area-inset-top)));
+  }
+  .agents-layer .conversation-header {
+    padding-top: max(12px, env(safe-area-inset-top));
+  }
+  .agents-layer .composer-wrap {
+    padding-bottom: 12px;
+  }
+}

@@ -12,6 +12,7 @@ import type {
 } from "../src/shared/subagents";
 import { App } from "../src/client/App";
 import { startApp } from "./fixtures/app";
+import { browserCookieFetch } from "./fixtures/control-session";
 import { EventSource as NodeEventSource } from "eventsource";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -560,6 +561,7 @@ test("App renders one historical roster outside work disclosure and refreshes it
   });
   server.service.emit(agent.id, run.id, "run_completed", {});
   const origin = `http://127.0.0.1:${server.server.port}`;
+  const browserFetch = browserCookieFetch(origin, originalFetch);
   let roster = snapshot([child({ state: "completed" })]);
   let reads = 0;
   globalThis.fetch = (async (input, options) => {
@@ -567,11 +569,11 @@ test("App renders one historical roster outside work disclosure and refreshes it
       reads++;
       return Response.json(roster);
     }
-    return originalFetch(new URL(String(input), origin), options);
+    return browserFetch(new URL(String(input), origin), options);
   }) as typeof fetch;
   globalThis.EventSource = class extends NodeEventSource {
     constructor(url: string) {
-      super(new URL(url, origin), { fetch: originalFetch });
+      super(new URL(url, origin), { fetch: browserFetch });
     }
   } as unknown as typeof EventSource;
   render(<App />);

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startApp } from "./fixtures/app";
+import { controlHeaders } from "./fixtures/control-session";
 import { Store } from "../src/server/store";
 import { generatedAgentName } from "../src/shared/agent-names";
 
@@ -193,7 +194,7 @@ test("naming eligibility persists across reopen; migrations never opt old agents
     instructions: "",
     color: "#fff",
   });
-  store.db.exec("DROP TABLE agent_naming; ALTER TABLE agents DROP COLUMN model; ALTER TABLE agents DROP COLUMN effort; PRAGMA user_version=8;");
+  store.db.exec("DROP TABLE agent_naming; ALTER TABLE agents DROP COLUMN model; ALTER TABLE agents DROP COLUMN effort; DROP TABLE app_icon_assets; DROP TABLE app_launches; DROP TABLE apps; DROP TABLE app_resources; DROP TABLE app_ports; DROP TABLE app_locks; DROP TABLE app_releases; PRAGMA user_version=8;");
   store.close();
   store = new Store(path);
   expect(store.agent(old.id)!.name).toBe("New Agent");
@@ -216,7 +217,7 @@ test("naming eligibility persists across reopen; migrations never opt old agents
     expect(store.claimAgentName(pending.id)).toBe(false);
     expect(store.claimAgentName(manual.id)).toBe(false);
     expect(store.db.query("PRAGMA user_version").get()).toEqual({
-      user_version: 12,
+      user_version: 15,
     });
   } finally {
     store.close();
@@ -352,10 +353,11 @@ for (const mode of ["api", "chatgpt"] as const)
 
 test("agent creation API defaults the name and validates explicit name edits", async () => {
   const { app } = await fixture();
+  const authorization = await controlHeaders(app.server.url.origin);
   const create = (input: unknown) =>
     fetch(new URL("/api/agents", app.server.url), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authorization },
       body: JSON.stringify(input),
     });
   const response = await create({ instructions: "", color: "#abcdef" });
@@ -372,10 +374,11 @@ test("agent creation API defaults the name and validates explicit name edits", a
 
 test("partial profile edits preserve unrelated fields and avatar-only edits retain naming eligibility", async () => {
   const { app, agent } = await fixture();
+  const authorization = await controlHeaders(app.server.url.origin);
   const patch = (id: string, input: unknown) =>
     fetch(new URL(`/api/agents/${id}`, app.server.url), {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authorization },
       body: JSON.stringify(input),
     });
   expect((await patch(agent.id, { avatarId: "octopus" })).status).toBe(200);

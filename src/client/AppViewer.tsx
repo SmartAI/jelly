@@ -1,11 +1,9 @@
-import { useEffect, useRef, useState } from "react";
-import { Check, CircleAlert, LoaderCircle } from "lucide-react";
-import type { AppRecord, AppsCapabilities } from "../shared/apps";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Check } from "lucide-react";
+import type { AppRecord } from "../shared/apps";
 import { appsApi, recordAppLaunch } from "./api";
-import { appException, appOrigin } from "./app-origin";
-import { safeAppRoute } from "./apps-navigation";
+import { isLoopback } from "./app-origin";
 import { AppActions } from "./AppActions";
-import { AppIcon } from "./AppsHome";
 import { readPreference, savePreference } from "./theme";
 
 export type ViewerCorner = AppRecord["viewerCorner"];
@@ -15,81 +13,37 @@ const corners: ViewerCorner[] = [
   "bottom-left",
   "bottom-right",
 ];
-export function validateAppBridge(
-  event: Pick<MessageEvent, "data" | "origin" | "source">,
-  appId: string,
-  origin: string,
-  source: Window | null,
-): { type: "jelly:ready" } | { type: "jelly:route"; route: string } | null {
-  if (!source || event.source !== source || event.origin !== origin)
-    return null;
-  const data = event.data;
-  if (
-    !data ||
-    typeof data !== "object" ||
-    Array.isArray(data) ||
-    data.appId !== appId
-  )
-    return null;
-  const keys = Object.keys(data).sort().join(",");
-  if (data.type === "jelly:ready" && keys === "appId,type")
-    return { type: "jelly:ready" };
-  if (
-    data.type === "jelly:route" &&
-    keys === "appId,route,type" &&
-    safeAppRoute(data.route)
-  )
-    return { type: "jelly:route", route: data.route };
-  return null;
-}
-
 export function AppViewer({
   appId,
   navigationId,
-  route,
-  capabilities,
   changedApp,
   revision,
   onHome,
   onChanged,
-  onCapabilities,
-  onRoute,
   onDetails,
-  onNewTab,
   onEdit,
-  onControl,
   onRemove,
 }: {
   appId: string;
   navigationId: string;
-  route: string;
-  capabilities: AppsCapabilities | null;
   changedApp: AppRecord | null;
   revision: number;
   onHome: () => void;
   onChanged: (app: AppRecord) => void;
-  onCapabilities: (capabilities: AppsCapabilities) => void;
-  onRoute: (route: string) => void;
   onDetails: (app: AppRecord) => void;
-  onNewTab: (app: AppRecord, navigationId: string) => void;
   onEdit: (app: AppRecord) => void;
-  onControl: (app: AppRecord, action: "start" | "stop" | "restart") => void;
   onRemove: (app: AppRecord) => void;
 }) {
   const [app, setApp] = useState<AppRecord | null>(null);
   const [error, setError] = useState("");
   const [launchError, setLaunchError] = useState("");
   const [retry, setRetry] = useState(0);
-  const [ready, setReady] = useState(false);
-  const [fallback, setFallback] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
-  const [entryRoute] = useState(() => (safeAppRoute(route) ? route : "/"));
-  const [corner, setCorner] = useState<ViewerCorner | null>(null);
+  const [loadObserved, setLoadObserved] = useState(false);
+  const [guidance, setGuidance] = useState(false);
+  const [corner, setCorner] = useState<ViewerCorner>("top-left");
   const home = useRef<HTMLButtonElement>(null);
-  const frame = useRef<HTMLIFrameElement>(null);
-  const readyAcknowledged = useRef(false);
-  const callbacks = useRef({ onChanged, onRoute, onCapabilities });
-  callbacks.current = { onChanged, onRoute, onCapabilities };
+  const changed = useRef(onChanged);
+  changed.current = onChanged;
   useEffect(() => {
     home.current?.focus({ preventScroll: true });
   }, []);
@@ -114,27 +68,17 @@ export function AppViewer({
       .catch((error) => {
         if (!controller.signal.aborted) setError((error as Error).message);
       });
-    if (!capabilities)
-      void appsApi
-        .capabilities()
-        .then((value) => {
-          if (!controller.signal.aborted)
-            callbacks.current.onCapabilities(value);
-        })
-        .catch(() => {}); // Unknown capability stays unsupported; app recovery is still usable.
     return () => controller.abort();
-  }, [appId, retry, revision]);
+  }, [appId, revision, retry]);
   useEffect(() => {
     if (changedApp?.id === appId) setApp(changedApp);
   }, [changedApp, appId]);
   useEffect(() => {
     let dead = false;
-    // Entry is a visit even if unavailable. Service/HTTP polling is never a visit.
     void recordAppLaunch(appId, navigationId)
       .then((record) => {
         if (!dead) {
-          setApp(record);
-          callbacks.current.onChanged(record);
+          changed.current(record);
           setLaunchError("");
         }
       })
@@ -145,103 +89,72 @@ export function AppViewer({
       dead = true;
     };
   }, [appId, navigationId]);
-  const origin = app ? appOrigin(app) : null;
-  const exceptional = app ? appException(app) : null;
-  const mixed =
-    !!origin &&
-    window.location.protocol === "https:" &&
-    origin.startsWith("http:");
-  const embeddingVerified =
-    !!capabilities &&
-    "embedding" in capabilities &&
-    capabilities.embedding === true;
-  const direct =
-    app?.managementMode === "linked" ||
-    app?.launchMode === "direct" ||
-    mixed ||
-    !embeddingVerified;
-  const canEmbed = !!app && !!origin && !direct && !exceptional;
+  useLayoutEffect(() => {
+    setLoadObserved(false);
+  }, [app?.url, retry]);
   useEffect(() => {
-    if (!canEmbed || !origin) return;
-    readyAcknowledged.current = false;
-    setReady(false);
-    setFallback(false);
-    setDismissed(false);
-    const timeout = window.setTimeout(() => setFallback(true), 8000);
-    const message = (event: MessageEvent) => {
-      const valid = validateAppBridge(
-        event,
-        appId,
-        origin,
-        frame.current?.contentWindow ?? null,
-      );
-      if (!valid) return;
-      if (valid.type === "jelly:ready") {
-        setReady(true);
-        setFallback(false);
-        clearTimeout(timeout);
-        // An SDK may reply to the viewer handshake with ready; acknowledge
-        // only once per frame load, never create an unbounded message loop.
-        if (!readyAcknowledged.current) {
-          readyAcknowledged.current = true;
-          frame.current?.contentWindow?.postMessage(
-            { type: "jelly:viewer", appId },
-            origin,
-          );
-        }
-      } else callbacks.current.onRoute(valid.route);
-    };
-    window.addEventListener("message", message);
-    return () => {
-      clearTimeout(timeout);
-      window.removeEventListener("message", message);
-    };
-  }, [appId, origin, canEmbed, retry]);
-  function directLaunch() {
-    if (app) onNewTab(app, navigationId);
-  }
-  // When Jelly can restore a stopped/failed service, that is the useful first step.
-  const restoreAction =
-    app?.managementMode === "managed" &&
-    capabilities?.systemd &&
-    app.unitName &&
-    exceptional &&
-    exceptional !== "Tailnet unavailable" &&
-    app.desiredState !== "draft"
-      ? exceptional === "Stopped"
-        ? ("start" as const)
-        : ("restart" as const)
-      : null;
+    setGuidance(false);
+    const timer = window.setTimeout(() => setGuidance(true), 8000);
+    return () => window.clearTimeout(timer);
+  }, [app?.url, retry]);
+  const mixed =
+    !!app &&
+    window.location.protocol === "https:" &&
+    new URL(app.url).protocol === "http:";
+  const loopback = !!app && isLoopback(new URL(app.url).hostname);
+  const help = (
+    <>
+      <p>
+        A frame load does not prove the app rendered. Jelly cannot diagnose
+        every cross-origin failure.
+      </p>
+      <ul>
+        <li>
+          Check the app is running and this device can reach its registered URL.
+        </li>
+        <li>
+          The app's CSP frame-ancestors and X-Frame-Options must permit Jelly.
+          Jelly does not bypass them.
+        </li>
+        <li>
+          Framed sign-in and third-party-cookie restrictions may require changes
+          to the app's authentication configuration.
+        </li>
+        <li>
+          HTTPS Jelly requires an HTTPS app. Localhost on a phone means the
+          phone; use a browser-reachable Tailscale URL instead.
+        </li>
+      </ul>
+    </>
+  );
   return (
     <section
       className="app-viewer"
       aria-label={app ? `${app.name} viewer` : "App viewer"}
     >
-      <div className="viewer-home-controls" data-corner={corner ?? "top-left"}>
+      <div className="viewer-home-controls" data-corner={corner}>
         <button ref={home} className="viewer-home-pill" onClick={onHome}>
           <img src="/brand/jelly-mark.png" alt="" />
-          Jelly home
+          Back to Apps
         </button>
         {app && (
           <AppActions
             viewer
             app={app}
             onDetails={() => onDetails(app)}
-            onNewTab={directLaunch}
             onEdit={() => onEdit(app)}
-            onControl={(action) => onControl(app, action)}
             onRemove={() => onRemove(app)}
           >
+            <button role="menuitem" onClick={() => setGuidance(true)}>
+              Embedding help / retry
+            </button>
             <div role="separator" className="apps-menu-separator" />
-            <div role="group" aria-label="Jelly home position">
-              <div className="apps-menu-heading" aria-hidden="true">
-                Jelly home position
-              </div>
+            <div role="group" aria-label="Back to Apps position">
               {corners.map((value) => (
                 <button
                   key={value}
                   role="menuitem"
-                  aria-label={`Home control ${value.replace("-", " ")}`}
+                  aria-label={`Back control ${value.replace("-", " ")}`}
                   onClick={() => {
                     setCorner(value);
                     savePreference(`jelly.viewer-corner.${appId}`, value);
@@ -254,104 +167,37 @@ export function AppViewer({
                       visibility: value === corner ? "visible" : "hidden",
                     }}
                   />
-                  <span>
-                    {value[0]!.toUpperCase() + value.slice(1).replace("-", " ")}
-                  </span>
+                  <span>{value.replace("-", " ")}</span>
                 </button>
               ))}
             </div>
           </AppActions>
         )}
       </div>
-      {canEmbed && (
+      {app && !mixed && !error && (
         <iframe
-          key={retry}
-          ref={frame}
-          title={app!.name}
-          src={`${origin}${entryRoute}`}
-          sandbox="allow-scripts allow-forms allow-same-origin"
+          key={`${app.url}-${retry}`}
+          title={app.name}
+          src={app.url}
+          sandbox="allow-scripts allow-forms allow-same-origin allow-downloads"
           allow="camera 'none'; microphone 'none'; geolocation 'none'; fullscreen 'none'; payment 'none'; usb 'none'; clipboard-read 'none'; clipboard-write 'none'"
           referrerPolicy="no-referrer"
-          onLoad={() => {
-            // A denied/blank frame also fires load. Only a validated bridge proves readiness.
-            readyAcknowledged.current = false;
-            frame.current?.contentWindow?.postMessage(
-              { type: "jelly:viewer", appId },
-              origin!,
-            );
-          }}
-          onError={() => setFallback(true)}
+          onLoad={() => setLoadObserved(true)}
+          onError={() => setGuidance(true)}
         />
       )}
-      {(!canEmbed || error) && (
+      {(!app || mixed || error) && (
         <div className="viewer-recovery">
           <div className="viewer-recovery-content">
-            {app ? (
-              <AppIcon app={app} />
-            ) : (
-              <span className="viewer-recovery-placeholder" aria-hidden="true">
-                {error ? (
-                  <CircleAlert size={30} />
-                ) : (
-                  <LoaderCircle className="spin" size={28} />
-                )}
-              </span>
-            )}
-            <h1>{app?.name ?? "App unavailable"}</h1>
-            {error ? (
-              <p role="alert">{error}</p>
-            ) : !app ? (
-              <p role="status">Loading app…</p>
-            ) : exceptional ? (
-              <p>
-                {exceptional === "Starting"
-                  ? "This app is starting. Return home or retry when it is ready."
-                  : exceptional === "Tailnet unavailable"
-                    ? "This app is not reachable over Tailscale. Check this device's tailnet connection and access rules. Local service health does not prove remote reachability."
-                    : `This app is ${exceptional.toLowerCase()}. Its place in Apps is kept.`}
-              </p>
-            ) : !origin ? (
-              <p>
-                No app address is available from this device. Local-only apps
-                cannot be reached from a remote phone. Check Tailscale access or
-                app details.
-              </p>
-            ) : mixed ? (
-              <p>
-                HTTPS Jelly cannot embed this HTTP app. Open it in a new tab
-                instead; secure-context features require private HTTPS.
-              </p>
-            ) : direct ? (
-              <p>
-                {app.managementMode === "linked" || app.launchMode === "direct"
-                  ? "This app opens directly in a new tab. Apps stays here. Jelly cannot guarantee an in-page home button on an imported app."
-                  : "Embedding has not been verified by this instance. Open in a new tab for compatibility; direct access is not a cookie-isolation solution."}
-              </p>
-            ) : null}
-            {direct && !!capabilities?.warnings?.length && (
-              <ul aria-label="Instance limitations">
-                {capabilities.warnings.map((limitation, index) => (
-                  <li key={index}>{limitation}</li>
-                ))}
-              </ul>
-            )}
+            <h1>{app?.name ?? "App viewer"}</h1>
+            <p role={error || mixed ? "alert" : "status"}>
+              {error ||
+                (mixed
+                  ? "HTTPS Jelly cannot embed this HTTP app. Configure HTTPS hosting for the app or use HTTP Jelly on your private network."
+                  : "Loading app registration…")}
+            </p>
+            {help}
             <div className="apps-detail-actions">
-              {app && restoreAction && (
-                <button
-                  className="primary"
-                  onClick={() => onControl(app, restoreAction)}
-                >
-                  {restoreAction === "start" ? "Start app" : "Restart app"}
-                </button>
-              )}
-              {app && origin && (
-                <button
-                  className={restoreAction ? "secondary" : "primary"}
-                  onClick={directLaunch}
-                >
-                  Open in new tab
-                </button>
-              )}
               <button
                 className="secondary"
                 onClick={() => setRetry((value) => value + 1)}
@@ -360,30 +206,41 @@ export function AppViewer({
               </button>
               {app && (
                 <button className="secondary" onClick={() => onDetails(app)}>
-                  Details
+                  Edit registration
                 </button>
               )}
             </div>
           </div>
         </div>
       )}
-      {canEmbed && fallback && !ready && !dismissed && (
-        <div className="viewer-frame-fallback" role="status">
+      {app && !mixed && !error && guidance && (
+        <div className="viewer-guidance" role="status">
+          <details>
+            <summary>App not appearing? Embedding help</summary>
+            {help}
+            {loopback && (
+              <p>
+                This URL uses loopback. It always refers to the device viewing
+                Jelly.
+              </p>
+            )}
+          </details>
           <p>
-            App not appearing? Some apps forbid framing. A frame load does not
-            confirm rendering.
+            {loadObserved
+              ? "Frame load observed; rendering is not verified."
+              : "Waiting for a frame load; the app may be unreachable or blocked."}
           </p>
           <div className="viewer-banner-actions">
-            <button className="primary" onClick={directLaunch}>
-              Open in new tab
-            </button>
             <button
               className="secondary"
               onClick={() => setRetry((value) => value + 1)}
             >
               Retry frame
             </button>
-            <button className="secondary" onClick={() => setDismissed(true)}>
+            <button className="secondary" onClick={() => onDetails(app)}>
+              Edit registration
+            </button>
+            <button className="secondary" onClick={() => setGuidance(false)}>
               Keep viewing
             </button>
           </div>
@@ -391,16 +248,16 @@ export function AppViewer({
       )}
       {launchError && (
         <div className="viewer-launch-error" role="alert">
-          Visit could not be saved. {launchError}{" "}
+          Visit could not be saved. {launchError}
           <button
-            onClick={() => {
+            onClick={() =>
               void recordAppLaunch(appId, navigationId)
                 .then((record) => {
+                  changed.current(record);
                   setLaunchError("");
-                  callbacks.current.onChanged(record);
                 })
-                .catch((error) => setLaunchError((error as Error).message));
-            }}
+                .catch((error) => setLaunchError((error as Error).message))
+            }
           >
             Retry recording visit
           </button>

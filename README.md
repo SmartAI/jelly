@@ -23,6 +23,12 @@ Real mobile UI with demonstration data and an original soundtrack; sudo executio
 - Includes all the features you'd expect from an agent: shell tools, subagents, and MCP connections, file uploads, inline images, downloadable artifacts etc.
 - Built with Bun, React, SQLite, and the [Pi agent harness](https://github.com/earendil-works/pi).
 
+## Trusted Apps
+
+Apps is an iframe-only launcher for independently hosted apps. Choose **Apps → Add app** and supply a name and browser-reachable HTTP(S) URL. Same-host different-port and Tailscale URLs work without rebuilding or adopting their services. Stars are explicit; history, icons, descriptions and attribution are retained. Every viewer has **Back to Apps**, retry/edit and honest framing/login guidance.
+
+**Only add apps you trust.** Same-host app servers may receive or interfere with Jelly cookies, including HttpOnly cookies; Tailscale protects network access, not app isolation. Jelly keeps session/CSRF and exact control-origin checks and stays unframeable. Registration does not verify embedding or availability, and removal never stops the app. See [Apps](docs/APPS.md).
+
 ## Subagent progress
 
 Delegated work appears in live, expandable cards in the conversation. Open a
@@ -83,6 +89,8 @@ bun start
 ```
 
 Open **http://127.0.0.1:3100**. Stop development first; both modes use API port 3100 by default. Production has no hot reload—restart after code changes when agents are idle. Development backend reloads interrupt active runs; set `JELLY_WATCH_API=0` to disable them.
+
+`JELLY_TAILSCALE=1 bun start` adds native HTTP listeners on discovered Tailscale addresses alongside loopback. `bun run dev:tailscale` uses native Vite listeners and its HTTP/WS loopback API proxy. Neither uses raw TCP forwarding nor LAN/wildcard listeners.
 
 Development serves only frontend source and assets; instance data, server source, and other repository files are not downloadable through Vite. Keep credentials and private files out of `public/`, `src/client/`, `src/shared/`, and `node_modules/`.
 

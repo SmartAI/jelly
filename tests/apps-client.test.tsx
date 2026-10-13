@@ -6,11 +6,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AppRecord, AppsCapabilities } from "../src/shared/apps";
 import { AppsHome, sortApps } from "../src/client/AppsHome";
-import { AppViewer, validateAppBridge } from "../src/client/AppViewer";
+import { AppViewer } from "../src/client/AppViewer";
 import { AppDetails, RemoveApp } from "../src/client/AppDetails";
 import { App } from "../src/client/App";
-import { appOrigin, appException } from "../src/client/app-origin";
-import { readAppsLocation, safeAppRoute } from "../src/client/apps-navigation";
+import { readAppsLocation } from "../src/client/apps-navigation";
 import { recordAppLaunch } from "../src/client/api";
 import { startApp } from "./fixtures/app";
 import { browserCookieFetch } from "./fixtures/control-session";
@@ -21,59 +20,28 @@ const originalEventSource = globalThis.EventSource;
 const originalOpen = window.open;
 let fixture: Awaited<ReturnType<typeof startApp>> | undefined;
 let dir: string | undefined;
-// The fixture explicitly verifies embedding; the current backend contract does
-// not yet include that policy field, so its absence must remain fail-closed.
-const capabilities: AppsCapabilities & { embedding?: boolean } = {
+const capabilities: AppsCapabilities = {
   supported: true,
-  platform: "linux",
-  managedDeployment: true,
-  systemd: true,
-  lingering: true,
-  tailscale: true,
-  tailnetAddresses: ["100.64.0.1"],
-  tailnetHostname: "fixture.tailnet.test",
-  gatewayNode: true,
-  gatewayNodeVersion: "v22.18.0",
-  embedding: true,
-  privateHttps: false,
-  cookieIsolation: "http-only-prefixed",
-  warnings: ["Remote verification pending"],
+  presentation: "trusted-iframe",
+  registrationOnly: true,
+  warnings: [],
 };
 function app(id: string, values: Partial<AppRecord> = {}): AppRecord {
   return {
     id,
     slug: id,
     name: id,
-    description: "A private app",
+    url: "http://localhost:3007/dashboard",
+    description: "A trusted app",
     iconAssetId: null,
     projectId: null,
     builderAgentId: null,
     sourceDirectory: null,
-    managementMode: "managed",
-    launchMode: "embedded",
-    runtimeSocket: null,
-    gatewayPort: 8101,
-    unitName: `jelly-app-${id}.service`,
-    deploymentRevision: "release-1",
-    executable: "/usr/bin/bun",
-    args: [],
-    healthPath: "/health",
-    localOrigin: "http://127.0.0.1:8101",
-    tailnetOrigin: "http://fixture.tailnet.test:8101",
-    allowedJellyOrigins: ["http://localhost"],
-    desiredState: "ready",
     starredAt: null,
     lastOpenedAt: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     viewerCorner: "top-left",
-    observation: {
-      serviceState: "running",
-      httpHealthy: true,
-      checkedAt: null,
-      tailnetReachable: null,
-      lastError: null,
-    },
     ...values,
   };
 }
@@ -153,11 +121,6 @@ function mockApps(
       record.lastOpenedAt = new Date().toISOString();
       return Response.json(record);
     }
-    if (match[2] === "logs")
-      return Response.json({
-        text: "service started\nsecret=[redacted]",
-        warning: "Best effort redaction only",
-      });
     if (match[2] === "icon")
       return Response.json({ ...record, iconAssetId: "new-icon" });
     return Response.json(record);
@@ -169,29 +132,22 @@ const homeProps = {
   focusAppId: null,
   revision: 0,
   changedApp: null,
-  onCapabilities() {},
   onLaunch() {},
   onDetails() {},
   onEdit() {},
   onBuild() {},
-  onControl() {},
+  onAdd() {},
   onRemove() {},
 };
 const viewerProps = {
   appId: "viewer",
   navigationId: "client-viewer",
-  route: "/",
-  capabilities,
   changedApp: null,
   revision: 0,
   onHome() {},
   onChanged() {},
-  onCapabilities() {},
-  onRoute() {},
   onDetails() {},
-  onNewTab() {},
   onEdit() {},
-  onControl() {},
   onRemove() {},
 };
 afterEach(async () => {
@@ -206,41 +162,6 @@ afterEach(async () => {
   if (dir) rmSync(dir, { recursive: true, force: true });
   fixture = undefined;
   dir = undefined;
-});
-
-test("Apps routes prefer explicit app/chat links; bridge paths cannot contain tokens or escaped navigation", () => {
-  for (const path of ["/", "/tasks/123", "/caf%C3%A9"])
-    expect(safeAppRoute(path)).toBe(true);
-  for (const path of [
-    "https://elsewhere.test",
-    "//evil.test",
-    "/a?token=secret",
-    "/a#token",
-    "/a\\b",
-    "/../x",
-    "/a/./b",
-    "/%2e%2e/x",
-    "/%2f%2fevil",
-    "/%5c",
-    "/%252f",
-    "/%3fkey",
-    "/%23hash",
-    "/%00",
-    "/%20",
-    "/x\n",
-    "/%zz",
-  ])
-    expect(safeAppRoute(path)).toBe(false);
-  window.history.replaceState(null, "", "/apps/viewer/tasks/123");
-  const first = readAppsLocation();
-  expect(first.destination).toBe("viewer");
-  expect(first.route).toBe("/tasks/123");
-  expect(readAppsLocation().navigationId).toBe(first.navigationId);
-  window.history.replaceState(null, "", "/agents/builder");
-  expect(readAppsLocation().agentId).toBe("builder");
-  window.history.replaceState(null, "", "/?agentId=query-builder");
-  expect(readAppsLocation().explicit).toBe(true);
-  expect(readAppsLocation().destination).toBe("agents");
 });
 
 test("Apps sorting is starred-first, stable and independent of opening or renaming favorites", () => {
@@ -376,192 +297,6 @@ test("AppsHome launch updates reorder History but never favorite order, and dete
     ).toBe("last"),
   );
   expect(document.activeElement?.id).toBe("jelly-app-last-launch");
-});
-
-test("AppViewer rejects wrong origins, windows, identity and schema; frame load alone proves nothing", async () => {
-  const source = {} as Window;
-  const valid = { type: "jelly:route", appId: "viewer", route: "/tasks/1" };
-  expect(
-    validateAppBridge(
-      { data: valid, origin: "http://app.test", source },
-      "viewer",
-      "http://app.test",
-      source,
-    ),
-  ).toEqual({ type: "jelly:route", route: "/tasks/1" });
-  for (const data of [
-    { ...valid, appId: "other" },
-    { ...valid, token: "secret" },
-    { ...valid, route: "/?token=secret" },
-    { type: "jelly:ready", appId: "viewer", route: "/" },
-    null,
-    [],
-  ])
-    expect(
-      validateAppBridge(
-        { data, origin: "http://app.test", source },
-        "viewer",
-        "http://app.test",
-        source,
-      ),
-    ).toBeNull();
-  expect(
-    validateAppBridge(
-      { data: valid, origin: "http://evil.test", source },
-      "viewer",
-      "http://app.test",
-      source,
-    ),
-  ).toBeNull();
-  expect(
-    validateAppBridge(
-      { data: valid, origin: "http://app.test", source: {} as Window },
-      "viewer",
-      "http://app.test",
-      source,
-    ),
-  ).toBeNull();
-  const mock = mockApps([app("viewer")]);
-  let reported = "";
-  render(
-    <AppViewer
-      {...viewerProps}
-      onRoute={(route) => {
-        reported = route;
-      }}
-    />,
-  );
-  await waitFor(() => expect(document.querySelector("iframe")).not.toBeNull());
-  const iframe = document.querySelector("iframe")!;
-  expect(iframe.getAttribute("sandbox")).toBe(
-    "allow-scripts allow-forms allow-same-origin",
-  );
-  expect(iframe.getAttribute("allow")).toContain("fullscreen 'none'");
-  fireEvent.load(iframe);
-  await waitFor(() =>
-    expect(
-      mock.calls.filter((call) => call.path.endsWith("/launch")),
-    ).toHaveLength(1),
-  );
-  act(() =>
-    window.dispatchEvent(
-      new window.MessageEvent("message", {
-        data: valid,
-        origin: "http://127.0.0.1:8101",
-        source: iframe.contentWindow,
-      }),
-    ),
-  );
-  expect(reported).toBe("/tasks/1");
-  expect(
-    mock.calls.filter((call) => call.path.endsWith("/launch")),
-  ).toHaveLength(1);
-  expect(iframe.getAttribute("src")).toBe("http://127.0.0.1:8101/");
-});
-
-test("Shared navigation ID deduplicates tile, viewer, direct fallback, and failed launches remain retryable", async () => {
-  const mock = mockApps([app("dedup")]);
-  await Promise.all([
-    recordAppLaunch("dedup", "same-visit"),
-    recordAppLaunch("dedup", "same-visit"),
-  ]);
-  await recordAppLaunch("dedup", "same-visit");
-  expect(
-    mock.calls.filter((call) => call.path.endsWith("/launch")),
-  ).toHaveLength(1);
-  await recordAppLaunch("dedup", "another-visit");
-  expect(
-    mock.calls.filter((call) => call.path.endsWith("/launch")),
-  ).toHaveLength(2);
-});
-
-test("Remote devices never get loopback, same-origin or credential-bearing app addresses; HTTPS never embeds HTTP", async () => {
-  const record = app("mixed");
-  expect(
-    appOrigin(record, {
-      hostname: "phone.tailnet.test",
-      origin: "https://phone.tailnet.test",
-    } as Location),
-  ).toBe(record.tailnetOrigin);
-  expect(
-    appOrigin({ ...record, tailnetOrigin: null }, {
-      hostname: "phone.tailnet.test",
-      origin: "https://phone.tailnet.test",
-    } as Location),
-  ).toBeNull();
-  expect(appOrigin({ ...record, localOrigin: "http://localhost" })).toBeNull();
-  for (const value of [
-    "http://user:secret@127.0.0.1:8101",
-    "http://127.0.0.1:8101/?token=secret",
-    "javascript:alert(1)",
-  ])
-    expect(appOrigin({ ...record, localOrigin: value })).toBeNull();
-  const tailnetDown = {
-    ...record,
-    observation: { ...record.observation, tailnetReachable: false },
-  };
-  expect(appException(tailnetDown)).toBeNull();
-  window.location.href = "http://phone.tailnet.test/apps/mixed";
-  expect(appException(tailnetDown)).toBe("Tailnet unavailable");
-  window.location.href = "https://localhost/apps/mixed";
-  mockApps([record]);
-  render(
-    <AppViewer {...viewerProps} appId="mixed" navigationId="mixed-visit" />,
-  );
-  await screen.findByText(/HTTPS Jelly cannot embed/);
-  expect(document.querySelector("iframe")).toBeNull();
-  expect(screen.getByRole("button", { name: "Open in new tab" })).toBeDefined();
-});
-
-test("Details sanitizes technical URLs, offers bounded diagnostics and rejects SVG icon uploads", async () => {
-  const record = app("Details", {
-    localOrigin: "http://user:secret@127.0.0.1:8101/?token=private",
-    builderAgentId: "removed-agent",
-  });
-  const mock = mockApps([record]);
-  let savedIcon = "";
-  render(
-    <AppDetails
-      app={record}
-      capabilities={capabilities}
-      agents={[]}
-      projects={[]}
-      onClose={() => {}}
-      onAgent={() => {}}
-      onNewTab={() => {}}
-      onEdit={() => {}}
-      onControl={() => {}}
-      onRemove={() => {}}
-      onChanged={(record) => {
-        savedIcon = record.iconAssetId ?? "";
-      }}
-    />,
-  );
-  expect(screen.queryByText(/user:secret/)).toBeNull();
-  expect(screen.getByText(/Agent unavailable/)).toBeDefined();
-  fireEvent.click(screen.getByRole("button", { name: "Load diagnostics" }));
-  await screen.findByText("Best effort redaction only");
-  expect(screen.getByText(/secret=\[redacted\]/)).toBeDefined();
-  fireEvent.change(screen.getByLabelText(/Choose app icon/), {
-    target: {
-      files: [
-        new window.File(["<svg/>"], "unsafe.svg", { type: "image/svg+xml" }),
-      ],
-    },
-  });
-  await screen.findByText(/SVG is not supported/);
-  expect(mock.calls.some((call) => call.path.endsWith("/icon"))).toBe(false);
-  fireEvent.change(screen.getByLabelText(/Choose app icon/), {
-    target: {
-      files: [
-        new window.File(["raster-fixture"], "safe.png", { type: "image/png" }),
-      ],
-    },
-  });
-  await waitFor(() => expect(savedIcon).toBe("new-icon"));
-  const upload = mock.calls.find((call) => call.path.endsWith("/icon"))!;
-  expect(upload.headers.get("Content-Type")).toBe("image/png");
-  expect(!!upload.headers.get("x-jelly-csrf")).toBe(true);
 });
 
 test("Apps/Agents switching preserves the mounted selected project, draft and chat DOM; Build prepares an unsent draft", async () => {
@@ -756,92 +491,59 @@ test("Browser destination navigation defers during private ComputerPanel handbac
   );
 }, 15000);
 
-test("Removing an app unregisters by default; uninstall is separate and linked apps have no service controls", async () => {
-  const managed = app("Remove-managed"),
-    linked = app("Remove-linked", {
-      managementMode: "linked",
-      launchMode: "direct",
-    });
-  const mock = mockApps([managed, linked]);
-  let removed = 0;
-  let ui = render(
-    <RemoveApp app={managed} onClose={() => {}} onRemoved={() => removed++} />,
+test("AppViewer uses the direct canonical URL without bridge or alternate launch and keeps Back reachable", async () => {
+  mockApps([app("viewer")]);
+  render(<AppViewer {...viewerProps} />);
+  const frame = await waitFor(() => {
+    const frame = document.querySelector("iframe")!;
+    expect(frame).toBeTruthy();
+    return frame;
+  });
+  expect(frame.getAttribute("src")).toBe("http://localhost:3007/dashboard");
+  expect(frame.getAttribute("sandbox")).toBe(
+    "allow-scripts allow-forms allow-same-origin allow-downloads",
   );
-  expect(screen.getByText(/service will continue running/)).toBeDefined();
-  expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(
-    false,
+  fireEvent.load(frame);
+  expect(screen.getByRole("button", { name: "Back to Apps" })).toBeTruthy();
+  expect(screen.queryByText("Open in new tab")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Options for viewer" }));
+  fireEvent.click(
+    screen.getByRole("menuitem", { name: "Embedding help / retry" }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Remove from Apps" }));
-  await waitFor(() => expect(removed).toBe(1));
   expect(
-    mock.calls.find((call) => call.path.endsWith("/remove"))?.data,
-  ).toEqual({ uninstall: false });
-  ui.unmount();
-  ui = render(
-    <RemoveApp app={linked} onClose={() => {}} onRemoved={() => removed++} />,
+    screen.getByText(/Frame load observed; rendering is not verified/),
+  ).toBeTruthy();
+  expect(screen.getByText(/third-party-cookie restrictions/)).toBeTruthy();
+  expect(screen.getByText(/Localhost on a phone means the phone/)).toBeTruthy();
+});
+test("AppViewer mixed content and missing registration show honest retry guidance without a fallback", async () => {
+  window.location.href = "https://localhost/apps/viewer";
+  mockApps([app("viewer")]);
+  render(<AppViewer {...viewerProps} navigationId="mixed-test" />);
+  await screen.findByText(/HTTPS Jelly cannot embed this HTTP app/);
+  expect(document.querySelector("iframe")).toBeNull();
+  expect(screen.queryByText("Open in new tab")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Edit registration" }),
+  ).toBeTruthy();
+  cleanup();
+  render(
+    <AppViewer {...viewerProps} appId="missing" navigationId="missing-test" />,
+  );
+  await screen.findByText("App not found.");
+  expect(screen.getByRole("button", { name: "Back to Apps" })).toBeTruthy();
+});
+test("RemoveApp unregisters metadata only, never offers uninstall", async () => {
+  const f = mockApps([app("remove")]);
+  render(
+    <RemoveApp app={app("remove")} onClose={() => {}} onRemoved={() => {}} />,
   );
   expect(screen.queryByRole("checkbox")).toBeNull();
-  expect(screen.getByText(/does not own this service/)).toBeDefined();
-  ui.unmount();
-  render(
-    <AppDetails
-      app={linked}
-      capabilities={capabilities}
-      agents={[]}
-      projects={[]}
-      onClose={() => {}}
-      onAgent={() => {}}
-      onNewTab={() => {}}
-      onEdit={() => {}}
-      onControl={() => {}}
-      onRemove={() => {}}
-      onChanged={() => {}}
-    />,
+  fireEvent.click(screen.getByRole("button", { name: "Remove from Apps" }));
+  await waitFor(() =>
+    expect(f.calls.some((call) => call.path.endsWith("/remove"))).toBe(true),
   );
-  expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
-});
-
-test("Unsupported embedding applies to linked apps too, and direct fallback discloses backend security limitations", async () => {
-  const record = app("unsafe-linked", {
-    managementMode: "linked",
-    launchMode: "embedded",
-  });
-  mockApps([record]);
-  const unsupported = {
-    ...capabilities,
-    embedding: false,
-    warnings: [
-      "JavaScript cookies are not isolated by ports. Direct launch is not a cookie-isolation solution.",
-    ],
-  };
-  render(
-    <AppViewer
-      {...viewerProps}
-      appId={record.id}
-      navigationId="unsafe-linked-visit"
-      capabilities={unsupported}
-    />,
+  expect(f.calls.find((call) => call.path.endsWith("/remove"))!.data).toEqual(
+    {},
   );
-  await screen.findByText(/Direct launch is not a cookie-isolation solution/);
-  expect(document.querySelector("iframe")).toBeNull();
-  expect(screen.getByRole("button", { name: "Open in new tab" })).toBeDefined();
-});
-
-test("Actual backend capabilities without an embedding policy fail closed without declaring deployment unsupported", async () => {
-  const record = app("unverified-managed");
-  mockApps([record]);
-  const actualShape = { ...capabilities };
-  delete (actualShape as Partial<AppsCapabilities>).embedding;
-  render(
-    <AppViewer
-      {...viewerProps}
-      appId={record.id}
-      navigationId="unverified-managed-visit"
-      capabilities={actualShape}
-    />,
-  );
-  await screen.findByText(/Embedding has not been verified/);
-  expect(document.querySelector("iframe")).toBeNull();
-  expect(actualShape.supported).toBe(true);
-  expect(actualShape.managedDeployment).toBe(true);
 });

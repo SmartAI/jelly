@@ -290,7 +290,7 @@ test("v4 migration backfills exact legacy directories without making files or ch
   s.event(a.id, run.id, "message", { role: "user", text: "hello" });
   s.finishRun(run.id, "completed", null);
   s.db.exec(
-    "ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT ''; DROP INDEX idx_agents_project; ALTER TABLE agents DROP COLUMN projectId; ALTER TABLE agents DROP COLUMN cwd; ALTER TABLE agents DROP COLUMN managedCwd; ALTER TABLE agents DROP COLUMN avatarId; ALTER TABLE agents DROP COLUMN model; ALTER TABLE agents DROP COLUMN effort; DROP TABLE projects; DROP TABLE app_icon_assets; DROP TABLE app_launches; DROP TABLE apps; DROP TABLE app_resources; DROP TABLE app_ports; DROP TABLE app_locks; DROP TABLE app_releases; PRAGMA user_version=4",
+    "ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT ''; DROP INDEX idx_agents_project; ALTER TABLE agents DROP COLUMN projectId; ALTER TABLE agents DROP COLUMN cwd; ALTER TABLE agents DROP COLUMN managedCwd; ALTER TABLE agents DROP COLUMN avatarId; ALTER TABLE agents DROP COLUMN model; ALTER TABLE agents DROP COLUMN effort; DROP TABLE projects; DROP TABLE app_icon_assets; DROP TABLE app_launches; DROP TABLE apps; PRAGMA user_version=4",
   );
   s.close();
   s = new Store(path, workspace);

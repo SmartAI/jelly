@@ -1,3 +1,5 @@
+import { isIP } from "node:net";
+
 /** Exact external origins accepted through a configured local reverse proxy. */
 export function publicOrigins(value = ""): string[] {
   return [
@@ -23,4 +25,24 @@ export function publicOrigins(value = ""): string[] {
         }),
     ),
   ];
+}
+
+/** Native listeners may bind discovered Tailscale IPs only, never LAN/wildcards. */
+export function tailnetAddresses(addresses: string[]): string[] {
+  for (const address of addresses) {
+    const parts = address.split(".").map(Number);
+    const v4 =
+      isIP(address) === 4 &&
+      parts[0] === 100 &&
+      parts[1]! >= 64 &&
+      parts[1]! <= 127;
+    const v6 =
+      isIP(address) === 6 &&
+      address.toLowerCase().startsWith("fd7a:115c:a1e0:");
+    if (!v4 && !v6)
+      throw new Error(
+        "Listeners require explicit Tailscale addresses, not LAN or wildcard addresses.",
+      );
+  }
+  return [...new Set(addresses)];
 }

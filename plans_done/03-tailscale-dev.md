@@ -2,7 +2,7 @@
 
 The dev server can be reached over HTTP using this computer's Tailscale DNS name or IPv4/IPv6 address on port 5173. `bun run dev:tailscale`, or `JELLY_TAILSCALE=1` with `bun run dev`, discovers and configures those addresses automatically. Loopback access remains available.
 
-A fixed TCP forwarder preserves Vite hot reload, SSE and browser desktop upgrades while listening only on Tailscale addresses. Exact host/origin allowlists and managed-browser control-origin protection include the external addresses. Request-ID generation supports HTTP browsers. No Tailscale Serve configuration, public listener or administrator authentication is required.
+The original fixed TCP forwarding implementation has been superseded by native Vite HTTP listeners on loopback and discovered Tailscale addresses; production shares Bun HTTP/SSE/WebSocket handlers across its native listeners. See [current transport architecture](../docs/ARCHITECTURE.md#private-native-http-listeners). Exact host/origin allowlists and managed-browser control-origin protection include the external addresses. Request-ID generation supports HTTP browsers. No Tailscale Serve configuration, public listener or administrator authentication is required.
 
 Implementation: [dev supervisor](../scripts/dev.ts), [tailnet transport](../scripts/tailscale.ts), [origin parsing](../src/shared/network.ts), [Vite](../vite.config.ts), [API](../src/server/app.ts) and [browser request IDs](../src/client/request-id.ts).
 

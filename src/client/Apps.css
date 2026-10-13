@@ -446,13 +446,6 @@
   line-height: 17px;
   overflow-wrap: anywhere;
 }
-.app-tile .app-exception {
-  font-size: 11px;
-  line-height: 15px;
-}
-.app-exception {
-  color: var(--error);
-}
 .app-row-actions {
   display: flex;
   align-items: center;
@@ -589,11 +582,6 @@
   color: var(--muted);
   font-size: 13px;
   line-height: 18px;
-}
-.app-launch-meta .app-exception::before {
-  content: "·";
-  margin-right: 4px;
-  color: var(--muted);
 }
 .app-history-row .app-row-actions {
   margin-right: -10px;
@@ -928,7 +916,7 @@
   max-width: 320px;
   margin-top: 28px;
 }
-.viewer-frame-fallback,
+.viewer-guidance,
 .viewer-launch-error,
 .apps-operation-error {
   position: absolute;
@@ -951,10 +939,10 @@
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
-.viewer-frame-fallback {
+.viewer-guidance {
   bottom: calc(76px + env(safe-area-inset-bottom));
 }
-.viewer-frame-fallback p {
+.viewer-guidance p {
   margin: 0 0 12px;
 }
 .viewer-banner-actions {
@@ -972,8 +960,7 @@
   top: auto;
   bottom: calc(var(--destination-nav-height) + 12px);
 }
-:is(.viewer-frame-fallback, .viewer-launch-error, .apps-operation-error)
-  button {
+:is(.viewer-guidance, .viewer-launch-error, .apps-operation-error) button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -990,7 +977,7 @@
 :is(.viewer-launch-error, .apps-operation-error) button {
   margin: 10px 8px 0 0;
 }
-.viewer-frame-fallback .primary {
+.viewer-guidance .primary {
   background: var(--button);
   color: var(--button-text);
 }
@@ -1061,35 +1048,6 @@ dialog.apps-sheet .modal-body > .error-text {
 }
 dialog.apps-sheet .settings-footnote {
   margin: 8px 16px 0;
-}
-dialog label.apps-uninstall {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  min-height: 52px;
-  margin: 16px 0 0;
-  padding: 14px 16px;
-  border-radius: 14px;
-  background: var(--page);
-  color: var(--text);
-  font-size: 16px;
-  line-height: 1.4;
-  cursor: pointer;
-}
-dialog .apps-uninstall input[type="checkbox"] {
-  display: block;
-  width: 24px;
-  min-width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
-  margin: 0;
-  padding: 0;
-  accent-color: var(--accent);
-}
-.apps-uninstall span {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: normal;
 }
 
 /* Builder: native pop-up rows inside grouped lists. */
@@ -1331,9 +1289,6 @@ dialog .app-quick-action:active:not(:disabled) {
   text-align: right;
   overflow-wrap: anywhere;
 }
-.app-details dd.app-status-exception {
-  color: var(--error);
-}
 .app-details dd a {
   color: var(--accent);
   text-decoration: none;
@@ -1354,94 +1309,6 @@ dialog .app-text-button {
   font-size: 16px;
   text-align: inherit;
   overflow-wrap: anywhere;
-}
-.app-disclosure > summary {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 52px;
-  padding: 12px 16px;
-  color: var(--text);
-  font-size: 16px;
-  list-style: none;
-  cursor: pointer;
-}
-.app-disclosure > summary::-webkit-details-marker {
-  display: none;
-}
-.app-disclosure > summary > span {
-  flex: 1;
-  min-width: 0;
-}
-.app-disclosure > summary > svg {
-  flex-shrink: 0;
-  color: var(--muted);
-  transition: transform 160ms ease;
-}
-.app-disclosure[open] > summary > svg {
-  transform: rotate(90deg);
-}
-.app-disclosure > summary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -3px;
-  border-radius: 14px;
-}
-.apps-sheet .app-disclosure {
-  margin-bottom: 12px;
-}
-.app-disclosure-body {
-  margin: 0;
-  padding: 0 0 16px;
-  border-top: 1px solid var(--border);
-}
-.app-disclosure-body > :is(p, pre, button) {
-  margin-inline: 16px;
-}
-.app-disclosure-body > p {
-  margin-block: 12px 0;
-}
-.app-disclosure-body > .subtle {
-  font-size: 13px;
-  line-height: 1.5;
-}
-.app-disclosure-body .error-text button {
-  min-height: 44px;
-  padding: 0 4px;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  font-weight: 600;
-}
-dialog .app-disclosure-body > .secondary {
-  margin-top: 12px;
-  min-height: 40px;
-  padding: 0 16px;
-  border: 0;
-  border-radius: 20px;
-  background: var(--apps-tint);
-  color: var(--apps-tint-text);
-  font-size: 15px;
-  font-weight: 600;
-}
-ul.app-disclosure-body {
-  padding: 12px 16px 14px 34px;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.5;
-}
-.apps-logs {
-  max-height: 300px;
-  margin-top: 12px;
-  overflow: auto;
-  padding: 12px;
-  border-radius: 12px;
-  background: var(--surface);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font:
-    12px/1.5 ui-monospace,
-    SFMono-Regular,
-    monospace;
 }
 .apps-sheet .app-details-remove-group {
   margin-top: 24px;
@@ -1538,4 +1405,34 @@ ul.app-disclosure-body {
   .agents-layer .composer-wrap {
     padding-bottom: 12px;
   }
+}
+
+.app-registration-form {
+  display: grid;
+  gap: 14px;
+}
+.app-registration-form label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.app-registration-form :is(input, textarea) {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 16px;
+  min-height: 44px;
+}
+.apps-add {
+  margin-bottom: 16px;
+  min-height: 44px;
+}
+.viewer-guidance {
+  max-height: min(65dvh, 480px);
+  overflow-y: auto;
+}
+.viewer-guidance summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
 }

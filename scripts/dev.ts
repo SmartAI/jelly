@@ -1,5 +1,6 @@
+import { createServer, type ViteDevServer } from "vite";
 import { publicOrigins } from "../src/shared/network";
-import { forwardTailnet, tailscaleNetwork } from "./tailscale";
+import { tailscaleNetwork } from "./tailscale";
 
 const devPort = 5173;
 if (Number(process.env.JELLY_PORT ?? 3100) === devPort)
@@ -14,46 +15,52 @@ const origins = [
     ...(tailnet?.origins ?? []),
   ]),
 ];
-const env = {
-  ...process.env,
-  JELLY_DEV: "1",
-  JELLY_PUBLIC_ORIGINS: origins.join(","),
-};
-// Disable explicitly when agents edit Jelly itself to avoid interrupting runs.
+process.env.JELLY_DEV = "1";
+process.env.JELLY_PUBLIC_ORIGINS = origins.join(",");
 const watchApi = process.env.JELLY_WATCH_API !== "0";
 console.log(
   watchApi
     ? "API auto-reload enabled: backend edits interrupt active agent runs."
     : "API auto-reload disabled: restart dev after backend changes when agents are idle.",
 );
-const api = Bun.spawn(["bun", ...(watchApi ? ["--watch"] : []), "src/server/index.ts"], {
-  env,
-  stdout: "inherit",
-  stderr: "inherit",
-});
-const web = Bun.spawn(["bun", "x", "vite"], {
-  env,
-  stdout: "inherit",
-  stderr: "inherit",
-});
-let closeProxy = async () => {};
+const api = Bun.spawn(
+  [process.execPath, ...(watchApi ? ["--watch"] : []), "src/server/index.ts"],
+  {
+    // Only Vite is reachable over Tailscale in dev; its existing HTTP/WS /api proxy
+    // reaches the loopback backend. No raw TCP forwarding or wildcard listener.
+    env: { ...process.env, JELLY_TAILSCALE: "0" },
+    stdout: "inherit",
+    stderr: "inherit",
+  },
+);
+const servers: ViteDevServer[] = [];
 let stopping: Promise<void> | undefined;
 const stop = () =>
   (stopping ??= (async () => {
     api.kill();
-    web.kill();
-    await closeProxy();
-    await Promise.all([api.exited, web.exited]);
+    await Promise.all(servers.map((server) => server.close()));
+    await api.exited;
   })());
 process.on("SIGINT", () => void stop());
 process.on("SIGTERM", () => void stop());
 try {
-  if (tailnet) {
-    closeProxy = await forwardTailnet(tailnet.addresses, devPort);
-    if (stopping) await closeProxy();
-    console.log(`Jelly over Tailscale: ${tailnet.origins[0]}`);
+  for (const host of ["127.0.0.1", ...(tailnet?.addresses ?? [])]) {
+    const web = await createServer({
+      server: { host, port: devPort, strictPort: true },
+    });
+    servers.push(web);
+    if (stopping) {
+      await web.close();
+      break;
+    }
+    await web.listen();
+    if (stopping) {
+      await web.close();
+      break;
+    }
   }
-  const code = await Promise.race([api.exited, web.exited]);
+  if (tailnet) console.log(`Jelly over Tailscale: ${tailnet.origins[0]}`);
+  const code = await api.exited;
   await stop();
   process.exit(code);
 } catch (error) {

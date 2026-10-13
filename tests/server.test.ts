@@ -484,7 +484,7 @@ test("schema v9 pins historical agent settings once, preserving Ultrafast and ar
   store.setConfig("api", "gpt-6.1-sol", "low");
   store.event(null, null, "config_changed", { model: "gpt-6.1-sol", effort: "low" });
   const history = store.historyPage(ultra.id);
-  store.db.exec("ALTER TABLE agents DROP COLUMN model; ALTER TABLE agents DROP COLUMN effort; DROP TABLE app_icon_assets; DROP TABLE app_launches; DROP TABLE apps; DROP TABLE app_resources; DROP TABLE app_ports; DROP TABLE app_locks; DROP TABLE app_releases; PRAGMA user_version=9;");
+  store.db.exec("ALTER TABLE agents DROP COLUMN model; ALTER TABLE agents DROP COLUMN effort; DROP TABLE app_icon_assets; DROP TABLE app_launches; DROP TABLE apps; PRAGMA user_version=9;");
   store.close();
   for (let attempt = 0; attempt < 2; attempt++) {
     store = new Store(path);
@@ -494,7 +494,7 @@ test("schema v9 pins historical agent settings once, preserving Ultrafast and ar
       expect(store.agent(ultra.id)).toMatchObject({ model: "gpt-6-astra-ultrafast", effort: "max" });
       expect(store.agent(unused.id)).toMatchObject({ model: "gpt-6.1-sol", effort: "low" });
       expect(store.historyPage(ultra.id)).toEqual(history);
-      expect(store.db.query("PRAGMA user_version").get()).toEqual({ user_version: 15 });
+      expect(store.db.query("PRAGMA user_version").get()).toEqual({ user_version: 12 });
       expect(store.db.query("PRAGMA foreign_key_check").all()).toEqual([]);
       // Later default changes and reopening must not rerun the backfill.
       store.setConfig("api", "gpt-6-astra", "medium");
@@ -516,7 +516,7 @@ test("schema v2 upgrades existing instances to Astra/Medium without losing agent
     color: "#b5bafc",
   });
   store.db.exec(
-    "ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT ''; DROP TABLE contexts; DROP TABLE timeline; DROP INDEX idx_agents_archive; DROP INDEX idx_agents_project; ALTER TABLE agents DROP COLUMN projectId; ALTER TABLE agents DROP COLUMN cwd; ALTER TABLE agents DROP COLUMN managedCwd; ALTER TABLE agents DROP COLUMN avatarId; ALTER TABLE agents DROP COLUMN archivedAt; ALTER TABLE agents DROP COLUMN model; ALTER TABLE agents DROP COLUMN effort; DROP TABLE projects; ALTER TABLE instance DROP COLUMN model; ALTER TABLE instance DROP COLUMN effort; DROP TABLE app_icon_assets; DROP TABLE app_launches; DROP TABLE apps; DROP TABLE app_resources; DROP TABLE app_ports; DROP TABLE app_locks; DROP TABLE app_releases; PRAGMA user_version=2;",
+    "ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT ''; DROP TABLE contexts; DROP TABLE timeline; DROP INDEX idx_agents_archive; DROP INDEX idx_agents_project; ALTER TABLE agents DROP COLUMN projectId; ALTER TABLE agents DROP COLUMN cwd; ALTER TABLE agents DROP COLUMN managedCwd; ALTER TABLE agents DROP COLUMN avatarId; ALTER TABLE agents DROP COLUMN archivedAt; ALTER TABLE agents DROP COLUMN model; ALTER TABLE agents DROP COLUMN effort; DROP TABLE projects; ALTER TABLE instance DROP COLUMN model; ALTER TABLE instance DROP COLUMN effort; DROP TABLE app_icon_assets; DROP TABLE app_launches; DROP TABLE apps; PRAGMA user_version=2;",
   );
   store.close();
   store = new Store(path);
@@ -554,7 +554,7 @@ test("schema v5 removes Role, preserves it in Instructions, and migrates only on
     color: "#b5bafc",
   });
   store.db.exec(
-    "ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT ''; ALTER TABLE agents DROP COLUMN model; ALTER TABLE agents DROP COLUMN effort; DROP TABLE app_icon_assets; DROP TABLE app_launches; DROP TABLE apps; DROP TABLE app_resources; DROP TABLE app_ports; DROP TABLE app_locks; DROP TABLE app_releases; PRAGMA user_version=5;",
+    "ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT ''; ALTER TABLE agents DROP COLUMN model; ALTER TABLE agents DROP COLUMN effort; DROP TABLE app_icon_assets; DROP TABLE app_launches; DROP TABLE apps; PRAGMA user_version=5;",
   );
   store.db
     .query("UPDATE agents SET role=? WHERE id=?")
@@ -574,7 +574,7 @@ test("schema v5 removes Role, preserves it in Instructions, and migrates only on
       expect(store.agent(withInstructions.id)).not.toHaveProperty("role");
       expect(store.agent(withInstructions.id)?.cwd).toBe(withInstructions.cwd);
       expect(store.db.query("PRAGMA user_version").get()).toEqual({
-        user_version: 15,
+        user_version: 12,
       });
     } finally {
       store.close();
@@ -920,12 +920,12 @@ test.each(["demo", "api", "chatgpt", "auto"])("schema v7 migrates %s safely with
   store.finishRun(run.id, "completed", null);
   const id = store.instance().id;
   store.db.query("UPDATE instance SET mode=?").run(mode);
-  store.db.exec("ALTER TABLE agents DROP COLUMN model; ALTER TABLE agents DROP COLUMN effort; DROP TABLE app_icon_assets; DROP TABLE app_launches; DROP TABLE apps; DROP TABLE app_resources; DROP TABLE app_ports; DROP TABLE app_locks; DROP TABLE app_releases; PRAGMA user_version=7;");
+  store.db.exec("ALTER TABLE agents DROP COLUMN model; ALTER TABLE agents DROP COLUMN effort; DROP TABLE app_icon_assets; DROP TABLE app_launches; DROP TABLE apps; PRAGMA user_version=7;");
   store.close();
   store = new Store(path);
   try {
     expect(store.instance()).toMatchObject({ id, mode: mode === "demo" ? "auto" : mode });
-    expect(store.db.query("PRAGMA user_version").get()).toEqual({ user_version: 15 });
+    expect(store.db.query("PRAGMA user_version").get()).toEqual({ user_version: 12 });
     expect(store.agent(agent.id)).toEqual(agent);
     expect(store.run(run.id)?.mode).toBe("demo");
     expect(store.historyPage(agent.id).events).toContainEqual(event);

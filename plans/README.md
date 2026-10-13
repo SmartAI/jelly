@@ -20,7 +20,7 @@ Projects and the Familiar UI are delivered. See [the delivery record](../plans_d
 
 ## Proposed features
 
-- [Apps Home Screen and managed apps](apps.md): a private app launcher, persistent user services, Tailscale access, agent deployment tools, and unobtrusive navigation home.
+- [Trusted iframe Apps launcher](apps-trusted-iframes.md): name/URL registry and iframe-only presentation implemented with disposable checks; accepts same-host cookie sharing for trusted apps. Migrations explicitly skipped because no apps/installations exist. Live activation and real-app/remote-device acceptance remain pending; see [current Apps direction](apps.md).
 - [Peekaboo integration](peekaboo-integration.md): scoped desktop tools and web controls in the current Jelly web app, using an externally installed Peekaboo host on the same Mac. Independent of native Jelly packaging; not implemented.
 
 ## In-progress integration

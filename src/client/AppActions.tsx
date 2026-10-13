@@ -1,15 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import {
-  CircleMinus,
-  Ellipsis,
-  Info,
-  MessageSquareText,
-  Play,
-  RotateCw,
-  Square,
-  SquareArrowOutUpRight,
-} from "lucide-react";
+import { CircleMinus, Ellipsis, Info, MessageSquareText } from "lucide-react";
 import type { AppRecord } from "../shared/apps";
 import { useAnchoredPopover } from "./useAnchoredPopover";
 import { appFocusId } from "./apps-navigation";
@@ -17,18 +8,14 @@ import { appFocusId } from "./apps-navigation";
 export function AppActions({
   app,
   onDetails,
-  onNewTab,
   onEdit,
-  onControl,
   onRemove,
   children,
   viewer = false,
 }: {
   app: AppRecord;
   onDetails: () => void;
-  onNewTab: () => void;
   onEdit: () => void;
-  onControl: (action: "start" | "stop" | "restart") => void;
   onRemove: () => void;
   children?: ReactNode;
   viewer?: boolean;
@@ -124,40 +111,10 @@ export function AppActions({
               <span>Details</span>
               <Info size={18} aria-hidden="true" />
             </button>
-            <button role="menuitem" onClick={() => run(onNewTab)}>
-              <span>Open in new tab</span>
-              <SquareArrowOutUpRight size={18} aria-hidden="true" />
-            </button>
             <button role="menuitem" onClick={() => run(onEdit)}>
               <span>Edit with agent</span>
               <MessageSquareText size={18} aria-hidden="true" />
             </button>
-            {app.managementMode === "managed" && (
-              <>
-                <div role="separator" className="apps-menu-separator" />
-                <button
-                  role="menuitem"
-                  onClick={() => run(() => onControl("start"))}
-                >
-                  <span>Start</span>
-                  <Play size={18} aria-hidden="true" />
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => run(() => onControl("stop"))}
-                >
-                  <span>Stop</span>
-                  <Square size={17} aria-hidden="true" />
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => run(() => onControl("restart"))}
-                >
-                  <span>Restart</span>
-                  <RotateCw size={18} aria-hidden="true" />
-                </button>
-              </>
-            )}
             {children}
             <div role="separator" className="apps-menu-separator" />
             <button

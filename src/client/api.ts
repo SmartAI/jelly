@@ -71,22 +71,13 @@ export const appsApi = {
   capabilities: () => api<AppsCapabilities>("/apps/capabilities"),
   register: (input: Record<string, unknown>) =>
     control<AppRecord>("/apps/register", input),
-  deploy: (manifest: Record<string, unknown>) =>
-    control<unknown>("/apps/deploy", manifest),
   star: (id: string, starred: boolean) =>
     control<AppRecord>(`/apps/${encodeURIComponent(id)}/star`, { starred }),
   launch: (id: string, navigationId: string) =>
     control<AppRecord>(`/apps/${encodeURIComponent(id)}/launch`, {
       navigationId,
     }),
-  control: (id: string, action: "start" | "stop" | "restart") =>
-    control<AppRecord>(`/apps/${encodeURIComponent(id)}/control`, { action }),
-  remove: (id: string, uninstall: boolean) =>
-    control<void>(`/apps/${encodeURIComponent(id)}/remove`, { uninstall }),
-  logs: (id: string) =>
-    api<{ text: string; warning: string }>(
-      `/apps/${encodeURIComponent(id)}/logs`,
-    ),
+  remove: (id: string) => control<{ ok: true }>(`/apps/${encodeURIComponent(id)}/remove`, {}),
   icon: (id: string, file: File) =>
     projectApi<AppRecord>(`/apps/${encodeURIComponent(id)}/icon`, {
       method: "POST",
@@ -95,7 +86,7 @@ export const appsApi = {
     }),
 };
 
-// Tiles, viewer entry and its direct fallback share a navigation ID. Reload and
+// Viewer entry and visit retries share a navigation ID. Reload and
 // StrictMode must not turn one navigation into multiple launch operations.
 const appLaunches = new Map<string, Promise<AppRecord>>();
 export function recordAppLaunch(id: string, navigationId: string) {

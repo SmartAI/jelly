@@ -4,11 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { chromium } from "playwright-core";
-import { removeRuntimeSocket } from "../src/server/apps-sockets";
-import {
-  defaultAppsCapabilities,
-  type AppsAdapter,
-} from "../src/server/apps-runtime";
 import { startApp } from "./fixtures/app";
 const cleanups: (() => Promise<unknown> | void)[] = [];
 afterEach(async () => {
@@ -19,62 +14,14 @@ async function fixture(
 ) {
   const dir = mkdtempSync(join(tmpdir(), "jelly-apps-api-"));
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
-  const units = new Map<string, string>();
-  const states = new Map<string, "running" | "stopped">();
-  const adapter: AppsAdapter = {
-    capabilities: async () => ({
-      ...defaultAppsCapabilities("linux"),
-      supported: true,
-      systemd: true,
-      lingering: true,
-      gatewayNode: true,
-      gatewayNodeVersion: "22",
-      managedDeployment: true,
-    }),
-    gatewayExecutable: async () => "/usr/bin/node",
-    portAvailable: async () => true,
-    command: async () => ({ code: 0, stdout: "", stderr: "" }),
-    installUnit: async (name, content) => {
-      units.set(name, content);
-    },
-    readUnit: async (name) => units.get(name) ?? null,
-    removeUnit: async (name) => {
-      units.delete(name);
-    },
-    systemctl: async (action, names = []) => {
-      if (["start", "restart", "stop"].includes(action))
-        for (const name of names)
-          states.set(name, action === "stop" ? "stopped" : "running");
-    },
-    state: async (name) => states.get(name) ?? "stopped",
-    health: async () => true,
-    socketHealth: async () => true,
-    runtimeIsolation: async () => ({ safe: true, ready: true }),
-    logs: async () => "token=should-be-redacted",
-  };
   const app = await startApp({
     dataDir: dir,
     configDir: join(dir, "config"),
     authPath: join(dir, "auth.json"),
     port: 0,
-    appsAdapter: adapter,
     ...extra,
   });
-  cleanups.push(async () => {
-    await app.service.apps.close();
-    const resources = app.service.store.db
-      .query(
-        "SELECT appId,runtimeSocket FROM app_resources WHERE runtimeSocket IS NOT NULL",
-      )
-      .all() as { appId: string; runtimeSocket: string }[];
-    const instanceId = app.service.store.instance().id;
-    await app.close();
-    for (const resource of resources)
-      await removeRuntimeSocket(resource.runtimeSocket, {
-        instanceId,
-        appId: resource.appId,
-      });
-  });
+  cleanups.push(() => app.close());
   const origin = app.server.url.origin;
   const bootstrap = await fetch(origin + "/api/control-session");
   const session = await bootstrap.json();
@@ -97,7 +44,7 @@ async function fixture(
     });
   return { app, dir, origin, request, cookie, csrf: session.csrf };
 }
-test("Apps API routes use shared service, CSRF, explicit star/launch, bounded logs and lifecycle contracts", async () => {
+test("Apps API routes use shared service, CSRF, explicit star/launch, metadata-only removal", async () => {
   const f = await fixture();
   expect((await f.request("/api/apps/capabilities")).status).toBe(200);
   const response = await f.request("/api/apps/register", "POST", {
@@ -127,49 +74,24 @@ test("Apps API routes use shared service, CSRF, explicit star/launch, bounded lo
   expect(page.starred[0].id).toBe(app.id);
   expect(page.history).toEqual([]);
   expect(
-    (await f.request(`/api/apps/${app.id}/control`, "POST", { action: "stop" }))
-      .status,
-  ).toBe(409);
-  expect(
     (await f.request(`/api/apps/${app.id}/star`, "POST", { starred: "true" }))
       .status,
   ).toBe(400);
   expect((await f.request("/api/apps?limit=NaN")).status).toBe(400);
-  const source = join(f.dir, "source");
-  mkdirSync(source);
-  writeFileSync(join(source, "source.txt"), "fixture");
-  const deployedResponse = await f.request("/api/apps/deploy", "POST", {
-    name: "Managed fixture",
-    sourceDirectory: source,
-    executable: process.execPath,
-    args: [],
-    test: { executable: process.execPath, args: ["test"] },
-  });
-  expect(deployedResponse.status).toBe(200);
-  const deployed = await deployedResponse.json();
-  const logs = await (
-    await f.request(`/api/apps/${deployed.id}/logs?limit=10`)
-  ).json();
-  expect(logs.text).toContain("[redacted]");
-  expect(logs.text).not.toContain("should-be-redacted");
+  for (const path of [
+    "/api/apps/deploy",
+    `/api/apps/${app.id}/control`,
+    `/api/apps/${app.id}/logs`,
+  ])
+    expect((await f.request(path, "POST", {})).status).toBe(404);
   expect(
-    (await f.request(`/api/apps/${deployed.id}/logs?limit=501`)).status,
+    (await f.request(`/api/apps/${app.id}/remove`, "POST", { uninstall: true }))
+      .status,
   ).toBe(400);
   expect(
-    (
-      await f.request(`/api/apps/${deployed.id}/control`, "POST", {
-        action: "stop",
-      })
-    ).status,
+    (await f.request(`/api/apps/${app.id}/remove`, "POST", {})).status,
   ).toBe(200);
-  expect(
-    (
-      await f.request(`/api/apps/${deployed.id}/remove`, "POST", {
-        uninstall: true,
-      })
-    ).status,
-  ).toBe(200);
-  expect((await f.request(`/api/apps/${deployed.id}`)).status).toBe(404);
+  expect((await f.request(`/api/apps/${app.id}`)).status).toBe(404);
   expect(f.app.store.events().some((e) => e.type === "apps_changed")).toBe(
     true,
   );
@@ -179,10 +101,8 @@ test("Apps writes require existing CSRF; app origins cannot read API, bootstrap 
   expect((await fetch(f.origin + "/api/apps")).status).toBe(401);
   for (const endpoint of [
     "/api/apps/register",
-    "/api/apps/deploy",
     "/api/apps/absent/star",
     "/api/apps/absent/launch",
-    "/api/apps/absent/control",
     "/api/apps/absent/remove",
   ]) {
     expect(
@@ -249,7 +169,19 @@ test("Apps writes require existing CSRF; app origins cannot read API, bootstrap 
         url: f.origin.replace(/:\d+$/, ":39999"),
       })
     ).status,
-  ).toBe(400);
+  ).toBe(200);
+  // Successful registration does not grant the app origin control privileges.
+  expect(
+    (await f.request("/api/apps", "GET", undefined, { origin: appOrigin }))
+      .status,
+  ).toBe(403);
+  expect(
+    (
+      await f.request("/api/control-session", "GET", undefined, {
+        origin: appOrigin,
+      })
+    ).status,
+  ).toBe(403);
 });
 test("Apps viewer deep links receive only SPA, not an app same-origin content proxy", async () => {
   const staticDir = mkdtempSync(join(tmpdir(), "jelly-apps-static-"));
@@ -271,7 +203,7 @@ test("Apps viewer deep links receive only SPA, not an app same-origin content pr
     expect(head.headers.get("x-frame-options")).toBe("DENY");
   }
   expect(viewer.headers.get("content-security-policy")).toBe(
-    "frame-ancestors 'none'",
+    "frame-ancestors 'none'; frame-src http: https:",
   );
   expect(viewer.headers.get("x-frame-options")).toBe("DENY");
   expect(viewer.headers.get("referrer-policy")).toBe("no-referrer");
@@ -482,7 +414,10 @@ test("real browser cannot expose or replace accepted Jelly control cookie via pa
 test("binary icon API validates format/size/ownership and keeps reads private", async () => {
   const f = await fixture();
   const app = await (
-    await f.request("/api/apps/register", "POST", { name: "Icon API" })
+    await f.request("/api/apps/register", "POST", {
+      name: "Icon API",
+      url: "http://127.0.0.1:3007",
+    })
   ).json();
   const png = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN2kAAAAASUVORK5CYII=",
@@ -531,7 +466,10 @@ test("binary icon API validates format/size/ownership and keeps reads private", 
     ).status,
   ).toBe(403);
   const other = await (
-    await f.request("/api/apps/register", "POST", { name: "Other icon owner" })
+    await f.request("/api/apps/register", "POST", {
+      name: "Other icon owner",
+      url: "https://app.tailfixture.ts.net",
+    })
   ).json();
   expect(
     (
@@ -559,8 +497,7 @@ test("session/CSRF matrix fails before every Apps/legacy mutation without mutati
   const before = f.app.store.cursor();
   const endpoints: [string, string][] = [
     ["/api/apps/register", "POST"],
-    ["/api/apps/deploy", "POST"],
-    ...["star", "launch", "control", "remove", "icon"].map(
+    ...["star", "launch", "remove", "icon"].map(
       (action) => [`/api/apps/missing/${action}`, "POST"] as [string, string],
     ),
     ["/api/agents", "POST"],
@@ -734,32 +671,41 @@ test("real HTTPS browser uses host-prefixed control credentials, retires legacy 
   ).toBe("blocked");
 }, 15000);
 
-test("authenticated nullable linked-origin API edits clear fields without changing private-read authorization", async () => {
+test("authenticated URL edits retain one canonical URL and no URL is fetched by registration", async () => {
   const f = await fixture();
+  let fetched = 0;
+  const target = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch() {
+      fetched++;
+      return new Response("app");
+    },
+  });
+  cleanups.push(() => target.stop(true));
   const initial = await (
     await f.request("/api/apps/register", "POST", {
-      name: "Clearable link",
-      localOrigin: "http://127.0.0.2:8000",
-      tailnetOrigin: "http://app.tailfixture.ts.net:8000",
+      name: "Editable",
+      url: target.url.origin + "/dashboard",
     })
   ).json();
-  const cleared = await f.request("/api/apps/register", "POST", {
-    id: initial.id,
-    localOrigin: null,
-    tailnetOrigin: null,
-  });
-  expect(cleared.status).toBe(200);
-  const record = await cleared.json();
-  expect(record.localOrigin).toBeNull();
-  expect(record.tailnetOrigin).toBeNull();
-  expect(
-    (
-      await f.request("/api/apps/register", "POST", {
-        id: initial.id,
-        name: "Edited link",
-      })
-    ).status,
-  ).toBe(200);
-  expect((await fetch(f.origin + "/api/state")).status).toBe(401);
-  expect((await fetch(f.origin + "/api/health")).status).toBe(200);
+  expect(fetched).toBe(0);
+  const edited = await (
+    await f.request("/api/apps/register", "POST", {
+      id: initial.id,
+      url: "https://box.tailfixture.ts.net:3007/report",
+    })
+  ).json();
+  expect(edited.url).toBe("https://box.tailfixture.ts.net:3007/report");
+  expect(edited.id).toBe(initial.id);
+  for (const url of [
+    "javascript:alert(1)",
+    "http://user:pass@example.test",
+    "https://example.test/?token=secret",
+    f.origin + "/apps/" + initial.id,
+  ])
+    expect(
+      (await f.request("/api/apps/register", "POST", { id: initial.id, url }))
+        .status,
+    ).toBe(400);
 });

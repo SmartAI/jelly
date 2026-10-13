@@ -1,3 +1,4 @@
+import { AppRegistration } from "./AppRegistration";
 import { Avatar } from "./Avatar";
 import { InitialAgentIdentity } from "./InitialAgentIdentity";
 import { DEFAULT_AGENT_NAME } from "../shared/agent-names";
@@ -80,12 +81,11 @@ import type {
   MessageMode,
 } from "../shared/types";
 import { api, control, post, appsApi, recordAppLaunch } from "./api";
-import type { AppRecord, AppsCapabilities } from "../shared/apps";
+import type { AppRecord } from "../shared/apps";
 import { AppsHome } from "./AppsHome";
 import { AppViewer } from "./AppViewer";
 import { AppDetails, RemoveApp } from "./AppDetails";
 import { AppBuilder, appIntentDraft, type AppIntent } from "./AppBuilder";
-import { appOrigin, appException } from "./app-origin";
 import { useAppsNavigation } from "./apps-navigation";
 import "./Apps.css";
 import { readPreference, savePreference, useTheme } from "./theme";
@@ -2108,15 +2108,13 @@ export function App() {
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
-  const { location, navigate, viewer, reportRoute, destinationReady, navigationNotice } = useAppsNavigation(workspace?.instance.id ?? "", privateSheetOpen);
-  const [capabilities, setCapabilities] = useState<AppsCapabilities | null>(null);
+  const { location, navigate, viewer, destinationReady, navigationNotice } = useAppsNavigation(workspace?.instance.id ?? "", privateSheetOpen);
   const [changedApp, setChangedApp] = useState<AppRecord | null>(null);
   const [revision, setRevision] = useState(0);
+  const [addingApp, setAddingApp] = useState(false);
   const [details, setDetails] = useState<AppRecord | null>(null);
   const [removing, setRemoving] = useState<AppRecord | null>(null);
   const [intent, setIntent] = useState<AppIntent | null>(null);
-  const [failure, setFailure] = useState<{ message: string; retry: () => void } | null>(null);
-  const lifecyclePending = useRef(new Set<string>());
   const shell = useRef<HTMLDivElement>(null);
   useInputModality(shell);
   useEffect(() => {
@@ -2133,31 +2131,10 @@ export function App() {
     navigate("agents");
     setIntent({ app, id: requestId() });
   }
-  function launch(app: AppRecord, forceDirect = false, existingNavigationId?: string) {
-    const navigationId = existingNavigationId ?? requestId();
-    const origin = appOrigin(app);
-    const direct = (forceDirect || ((app.managementMode === "linked" || app.launchMode === "direct") && !appException(app))) && !!origin;
+  function launch(app: AppRecord) {
     changed({ ...app, lastOpenedAt: new Date().toISOString() });
-    if (direct) {
-      // Open synchronously with the user's gesture; never permit opener access.
-      window.open(`${origin}${existingNavigationId && location.appId === app.id ? location.route : "/"}`, "_blank", "noopener,noreferrer");
-    } else if (!existingNavigationId) {
-      setDetails(null);
-      viewer(app.id, navigationId);
-    }
-    void recordAppLaunch(app.id, navigationId).then(changed).catch(error => {
-      if (!direct) return; // Viewer owns embedded-entry recovery with this same ID.
-      setFailure({ message: `Visit could not be saved. ${(error as Error).message}`, retry: () => {
-        void recordAppLaunch(app.id, navigationId).then(record => { changed(record); setFailure(null); }).catch(error => setFailure(current => current ? { ...current, message: (error as Error).message } : current));
-      } });
-    });
-  }
-  async function lifecycle(app: AppRecord, action: "start" | "stop" | "restart") {
-    if (lifecyclePending.current.has(app.id)) return;
-    lifecyclePending.current.add(app.id); setFailure(null);
-    try { changed(await appsApi.control(app.id, action)); }
-    catch (error) { setFailure({ message: `${action} failed: ${(error as Error).message}`, retry: () => void lifecycle(app, action) }); }
-    finally { lifecyclePending.current.delete(app.id); }
+    setDetails(null);
+    viewer(app.id, requestId());
   }
   function openAgent(id: string) {
     setDetails(null);
@@ -2176,13 +2153,13 @@ export function App() {
         <AgentsWorkspace active={location.destination === "agents"} destinationReady={destinationReady} explicitAgentId={location.agentId} explicitNavigationId={location.navigationId} navigationNotice={navigationNotice} onPrivateSheet={setPrivateSheetOpen} intent={intent} onIntentDone={() => setIntent(null)} onSnapshot={setWorkspace} />
       </div>
       <div className="destination-layer apps-layer" data-active={location.destination === "apps"} inert={location.destination !== "apps"} aria-hidden={location.destination !== "apps"}>
-        <AppsHome active={location.destination === "apps"} focusAppId={location.focusAppId} revision={revision} changedApp={changedApp} onCapabilities={setCapabilities} onLaunch={launch} onDetails={setDetails} onEdit={app => build(app)} onBuild={() => build(null)} onControl={(app, action) => void lifecycle(app, action)} onRemove={setRemoving} />
+        <AppsHome active={location.destination === "apps"} focusAppId={location.focusAppId} revision={revision} changedApp={changedApp} onLaunch={launch} onDetails={setDetails} onEdit={app => build(app)} onBuild={() => build(null)} onAdd={() => setAddingApp(true)} onRemove={setRemoving} />
       </div>
-      {viewing && <AppViewer key={location.navigationId} appId={location.appId!} navigationId={location.navigationId} route={location.route} capabilities={capabilities} changedApp={changedApp} revision={revision} onHome={() => navigate("apps", location.appId)} onChanged={changed} onCapabilities={setCapabilities} onRoute={reportRoute} onDetails={setDetails} onNewTab={(app, navigationId) => launch(app, true, navigationId)} onEdit={app => build(app)} onControl={(app, action) => void lifecycle(app, action)} onRemove={setRemoving} />}
+      {viewing && <AppViewer key={location.navigationId} appId={location.appId!} navigationId={location.navigationId} changedApp={changedApp} revision={revision} onHome={() => navigate("apps", location.appId)} onChanged={changed} onDetails={setDetails} onEdit={app => build(app)} onRemove={setRemoving} />}
     </div>
     {mobileNavigation && destinationNavigation}
-    {failure && <div className="apps-operation-error" role="alert">{failure.message}<button className="secondary" onClick={failure.retry}>Retry</button><button className="secondary" onClick={() => setFailure(null)}>Dismiss</button></div>}
-    {details && <AppDetails key={details.id} app={details} onChanged={changed} capabilities={capabilities} agents={workspace?.agents ?? []} projects={workspace?.projects ?? []} onClose={() => setDetails(null)} onAgent={openAgent} onNewTab={() => launch(details, true, viewing ? location.navigationId : undefined)} onEdit={() => build(details)} onControl={action => void lifecycle(details, action)} onRemove={() => { setRemoving(details); setDetails(null); }} />}
+    {addingApp && <AppRegistration onClose={() => setAddingApp(false)} onSaved={app => { changed(app); setAddingApp(false); setRevision(value => value + 1); }} />}
+    {details && <AppDetails key={details.id} app={details} onChanged={changed} agents={workspace?.agents ?? []} projects={workspace?.projects ?? []} onClose={() => setDetails(null)} onAgent={openAgent} onEdit={() => build(details)} onRemove={() => { setRemoving(details); setDetails(null); }} />}
     {removing && <RemoveApp app={removing} onClose={() => setRemoving(null)} onRemoved={() => {
       setRemoving(null); setDetails(null); setChangedApp(null); setRevision(value => value + 1);
       navigate("apps");

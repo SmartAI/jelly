@@ -177,39 +177,15 @@ export class Store {
     if (version < 12 && !(this.db.query("PRAGMA table_info(instance)").all() as { name: string }[]).some(column => column.name === "browserBackend"))
       this.db.exec("ALTER TABLE instance ADD COLUMN browserBackend TEXT NOT NULL DEFAULT 'agent-browser' CHECK(browserBackend IN ('playwright','agent-browser'));");
     if (version < 12) this.db.exec("PRAGMA user_version=12;");
-    if (version < 13) this.db.transaction(() => {
-      // App ownership/resources outlive unregistering; no agent/project cascade.
-      this.db.exec(`
-        CREATE TABLE apps (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, record TEXT NOT NULL);
-        CREATE TABLE app_launches (appId TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-          navigationId TEXT NOT NULL, createdAt TEXT NOT NULL, PRIMARY KEY(appId,navigationId));
-        CREATE TABLE app_resources (appId TEXT PRIMARY KEY, unitName TEXT NOT NULL UNIQUE,
-          runtimePort INTEGER NOT NULL UNIQUE, gatewayPort INTEGER NOT NULL UNIQUE);
-        CREATE TABLE app_ports (port INTEGER PRIMARY KEY CHECK(port BETWEEN 1024 AND 65535),
-          appId TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('runtime','gateway')),
-          UNIQUE(appId,kind));
-        CREATE TABLE app_locks (appId TEXT PRIMARY KEY, owner TEXT NOT NULL, expiresAt INTEGER NOT NULL);
-        CREATE TABLE app_releases (appId TEXT NOT NULL, revision TEXT NOT NULL,
-          configuration TEXT NOT NULL, createdAt TEXT NOT NULL, PRIMARY KEY(appId,revision));
-        PRAGMA user_version=13;
-      `);
-    })();
-    if (version < 14) this.db.transaction(() => {
-      this.db.exec(`CREATE TABLE app_icon_assets (
+    // Apps stores registration metadata only. No deployment schema or data migration.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS apps (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, record TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS app_launches (appId TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+        navigationId TEXT NOT NULL, createdAt TEXT NOT NULL, PRIMARY KEY(appId,navigationId));
+      CREATE TABLE IF NOT EXISTS app_icon_assets (
         id TEXT PRIMARY KEY, appId TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-        mime TEXT NOT NULL CHECK(mime IN ('image/png','image/jpeg','image/webp'))
-      ); PRAGMA user_version=14;`);
-    })();
-    if (version < 15) this.db.transaction(() => {
-      // Retain legacy ownership/port reservations, but never adopt ID-only units.
-      this.db.exec(`ALTER TABLE app_resources RENAME TO app_resources_tcp;
-        CREATE TABLE app_resources (appId TEXT PRIMARY KEY, unitName TEXT NOT NULL UNIQUE,
-          runtimeSocket TEXT UNIQUE, gatewayPort INTEGER NOT NULL UNIQUE, legacyRuntimePort INTEGER);
-        INSERT INTO app_resources(appId,unitName,gatewayPort,legacyRuntimePort)
-          SELECT appId,unitName,gatewayPort,runtimePort FROM app_resources_tcp;
-        DROP TABLE app_resources_tcp;
-        PRAGMA user_version=15;`);
-    })();
+        mime TEXT NOT NULL CHECK(mime IN ('image/png','image/jpeg','image/webp')));
+    `);
     this.db.exec("CREATE TABLE IF NOT EXISTS browser_selection (id INTEGER PRIMARY KEY CHECK(id=1), selection TEXT NOT NULL)");
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_timeline_assistant_message
       ON timeline(agentId, id) WHERE ${assistantMessageFilter}`);

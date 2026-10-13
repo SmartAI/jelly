@@ -1,3 +1,4 @@
+import { tailscaleNetwork } from "../../scripts/tailscale";
 import { publicOrigins } from "../shared/network";
 import { resolve } from "node:path";
 import { startApp } from "./app";
@@ -7,18 +8,23 @@ process.env.PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT = resolve(
   import.meta.dir,
   "../../node_modules/@earendil-works/pi-coding-agent",
 );
+const port = Number(process.env.JELLY_PORT ?? 3100);
+const tailnet = process.env.JELLY_TAILSCALE === "1" ? await tailscaleNetwork(port) : null;
 const app = await startApp({
   dataDir,
   authPath: process.env.JELLY_AUTH_FILE,
-  port: Number(process.env.JELLY_PORT ?? 3100),
+  port,
+  listenAddresses: tailnet?.addresses,
   allowedOrigins: [
     ...publicOrigins(process.env.JELLY_PUBLIC_ORIGINS),
+    ...(tailnet?.origins ?? []),
     ...(process.env.JELLY_DEV === "1"
       ? ["http://127.0.0.1:5173", "http://localhost:5173"]
       : []),
   ],
 });
 console.log(`Jelly server: http://127.0.0.1:${app.server.port}`);
+if (tailnet) console.log(`Jelly over Tailscale: ${tailnet.origins[0]}`);
 console.log(`Model access: ${app.service.snapshot().config.notice}`);
 let closing = false;
 async function shutdown() {

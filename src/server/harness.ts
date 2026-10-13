@@ -7,7 +7,7 @@ import { RenderedFiles, renderFileTool } from "./rendered-files";
 import { applyPatchTool } from "./apply-patch";
 import { webTools, WEB_RESEARCH_INSTRUCTIONS } from "./web-tools";
 import { APPS_INSTRUCTIONS, instanceInfoTool } from "./apps-tools";
-import type { AppsService } from "./apps-service";
+import type { AppsService } from "./apps";
 import { SessionWork } from "./session-work";
 import { extensionUI } from "./extension-ui";
 import { prepareSubagentLiveness } from "./subagent-liveness";

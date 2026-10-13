@@ -9,6 +9,7 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     cors: false,
+    headers: { "Content-Security-Policy": "frame-ancestors 'none'; frame-src http: https:", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer" },
     allowedHosts: publicOrigins(process.env.JELLY_PUBLIC_ORIGINS).map(
       (origin) => new URL(origin).hostname,
     ),

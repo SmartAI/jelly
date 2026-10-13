@@ -11,10 +11,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { Store } from "../src/server/store";
-import {
-  defaultAppsCapabilities,
-  type AppsAdapter,
-} from "../src/server/apps-runtime";
 import { AppsService } from "../src/server/apps";
 import { appIconMime, APP_ICON_MAX_BYTES } from "../src/server/apps-icons";
 const png = Buffer.from(
@@ -30,35 +26,15 @@ function fixture() {
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
   const store = new Store(join(dir, "temporary.sqlite"));
   cleanups.push(() => store.close());
-  const forbidden = async (): Promise<never> => {
-    throw new Error("Icon operations must not access the manager or network.");
-  };
-  const adapter: AppsAdapter = {
-    capabilities: async () => defaultAppsCapabilities("darwin"),
-    gatewayExecutable: forbidden,
-    portAvailable: forbidden,
-    command: forbidden,
-    installUnit: forbidden,
-    readUnit: forbidden,
-    removeUnit: forbidden,
-    systemctl: forbidden,
-    state: forbidden,
-    health: forbidden,
-    socketHealth: forbidden,
-    runtimeIsolation: forbidden,
-    logs: forbidden,
-  };
-  const apps = new AppsService(store, {
-    dataDir: dir,
-    adapter,
-    observationIntervalMs: 0,
-  });
-  cleanups.push(() => apps.close());
+  const apps = new AppsService(store, { dataDir: dir });
   return { dir, store, apps };
 }
 test("icons are generated, app-owned, private raster assets preserving stars and visits", async () => {
   const f = fixture();
-  const app = f.apps.register({ name: "Icon app" });
+  const app = f.apps.register({
+    name: "Icon app",
+    url: "http://localhost:3007",
+  });
   f.apps.setStarred(app.id, true);
   f.apps.recordLaunch(app.id, "opened");
   const before = f.apps.get(app.id);
@@ -75,7 +51,10 @@ test("icons are generated, app-owned, private raster assets preserving stars and
     statSync(join(f.dir, "apps/icons", `${updated.iconAssetId}.png`)).mode &
       0o077,
   ).toBe(0);
-  const other = f.apps.register({ name: "Other" });
+  const other = f.apps.register({
+    name: "Other",
+    url: "http://localhost:3007",
+  });
   expect(() =>
     f.apps.register({
       id: other.id,
@@ -108,11 +87,8 @@ test("icons are generated, app-owned, private raster assets preserving stars and
   try {
     const apps = new AppsService(reopened, {
       dataDir: f.dir,
-      adapter: f.apps.adapter,
-      observationIntervalMs: 0,
     });
     expect(apps.icon(app.id).bytes).toEqual(png);
-    await apps.close();
   } finally {
     reopened.close();
   }
@@ -126,7 +102,10 @@ test("icons are generated, app-owned, private raster assets preserving stars and
 });
 test("icons reject malformed/mismatched/oversized/SVG assets and canonical path escapes", async () => {
   const f = fixture();
-  const app = f.apps.register({ name: "Bad icon" });
+  const app = f.apps.register({
+    name: "Bad icon",
+    url: "http://localhost:3007",
+  });
   await expect(
     f.apps.setIcon(app.id, { bytes: png, contentType: "image/jpeg" }),
   ).rejects.toThrow("Content-Type");
@@ -165,7 +144,10 @@ test("icons reject malformed/mismatched/oversized/SVG assets and canonical path 
 });
 test("native browser-generated PNG/JPEG/WebP raster formats validate and round-trip", async () => {
   const f = fixture();
-  const app = f.apps.register({ name: "Raster formats" });
+  const app = f.apps.register({
+    name: "Raster formats",
+    url: "http://localhost:3007",
+  });
   const browser = await chromium.launch({
     executablePath: process.env.CHROME_BIN ?? "/usr/bin/google-chrome",
     headless: true,

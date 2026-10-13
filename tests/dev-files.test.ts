@@ -53,6 +53,11 @@ test("dev HTTP only serves frontend assets, including encoded, raw and symlink p
     priorData = process.env.JELLY_DATA_DIR;
   process.env.JELLY_AUTH_FILE = join(root, "src/shared/custom-auth.json");
   process.env.JELLY_DATA_DIR = join(root, "src/client/custom-data");
+  // A real private socket tree must not be traversed by Vite's Bun watcher.
+  const privateSocket = createNetServer();
+  await new Promise<void>((r) =>
+    privateSocket.listen(join(root, ".jelly", "runtime.sock"), r),
+  );
   let server: Awaited<ReturnType<typeof createServer>> | undefined;
   try {
     server = await createServer({
@@ -63,6 +68,13 @@ test("dev HTTP only serves frontend assets, including encoded, raw and symlink p
       optimizeDeps: { noDiscovery: true, include: [] },
     });
     await server.listen();
+    expect(server.config.server.watch?.ignored).toContain(join(root, ".jelly"));
+    expect(server.config.server.watch?.ignored).toContain(
+      process.env.JELLY_DATA_DIR,
+    );
+    expect(server.config.server.watch?.ignored).toContain(
+      process.env.JELLY_AUTH_FILE,
+    );
     // A configured credential file can be created/repointed after dev startup.
     rmSync(join(root, "src/shared/custom-auth.json"));
     write("src/shared/aliased-private.json", marker);
@@ -109,6 +121,7 @@ test("dev HTTP only serves frontend assets, including encoded, raw and symlink p
     }
   } finally {
     await server?.close();
+    await new Promise<void>((r) => privateSocket.close(() => r()));
     if (priorAuth === undefined) delete process.env.JELLY_AUTH_FILE;
     else process.env.JELLY_AUTH_FILE = priorAuth;
     if (priorData === undefined) delete process.env.JELLY_DATA_DIR;

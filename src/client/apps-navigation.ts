@@ -8,41 +8,8 @@ export interface AppsLocation {
   appId: string | null;
   agentId: string | null;
   navigationId: string;
-  route: string;
   focusAppId: string | null;
   explicit: boolean;
-}
-
-/** Bridge routes are paths, not URLs. Reject encoded separators and dot segments too. */
-export function safeAppRoute(value: unknown): value is string {
-  if (
-    typeof value !== "string" ||
-    value.length > 2048 ||
-    !value.startsWith("/") ||
-    value.startsWith("//")
-  )
-    return false;
-  if (/[?#\\\s\u0000-\u001f\u007f]/.test(value)) return false;
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(value);
-  } catch {
-    return false;
-  }
-  if (
-    decoded !== value &&
-    /[/%?#\\\s\u0000-\u001f\u007f]/.test(decoded.replaceAll("/", ""))
-  )
-    return false;
-  // Encoded slash changes path boundaries; nested escapes can hide unsafe characters.
-  if (
-    /%(?:2f|5c|25)/i.test(value) ||
-    /[?#\\\s\u0000-\u001f\u007f]/.test(decoded)
-  )
-    return false;
-  return !decoded
-    .split("/")
-    .some((segment) => segment === "." || segment === "..");
 }
 
 export function readAppsLocation(): AppsLocation {
@@ -76,7 +43,6 @@ export function readAppsLocation(): AppsLocation {
     appId,
     agentId,
     navigationId,
-    route: viewer?.[2] && safeAppRoute(viewer[2]) ? viewer[2] : "/",
     focusAppId:
       typeof state.jellyFocusAppId === "string" ? state.jellyFocusAppId : null,
     explicit:
@@ -190,20 +156,10 @@ export function useAppsNavigation(
     window.history.pushState(next, "", url);
     setLocation(readAppsLocation());
   }
-  function reportRoute(route: string) {
-    if (!location.appId || !safeAppRoute(route)) return;
-    window.history.replaceState(
-      window.history.state,
-      "",
-      `/apps/${encodeURIComponent(location.appId)}${route === "/" ? "" : route}`,
-    );
-    setLocation((current) => ({ ...current, route }));
-  }
   return {
     location,
     navigate,
     viewer,
-    reportRoute,
     navigationNotice,
     destinationReady:
       location.explicit || (!!instanceId && restored === instanceId),

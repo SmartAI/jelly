@@ -11,8 +11,8 @@ export interface AppIntent {
 }
 export function appIntentDraft(app: AppRecord | null) {
   return app
-    ? `I'd like to edit the app “${app.name}” (app ID: ${app.id}). Inspect its project and Apps capabilities before changing or deploying it.\n\nMy changes: `
-    : "I'd like to build a persistent app in Jelly. Inspect the Apps capabilities, build and test it in this project, and ask before deploying/registering it. Include Jelly home navigation.\n\nMy idea: ";
+    ? `I'd like to edit the app “${app.name}” (app ID: ${app.id}). Inspect its project and registered URL. Jelly does not own its hosting. Ask before changing its service or registration.\n\nMy changes: `
+    : "I'd like to build a persistent app in Jelly. Inspect the Apps capabilities, build and test it in this project, and ask before registering its browser-reachable URL or changing hosting. Jelly displays trusted apps in an iframe; no app SDK or home link is required.\n\nMy idea: ";
 }
 
 /** Choosing a normal workspace prepares a draft; it never submits a model request. */

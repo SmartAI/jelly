@@ -1,3 +1,4 @@
+import { tailnetAddresses } from "../shared/network";
 import { DEFAULT_AGENT_NAME } from "../shared/agent-names";
 import { AVATARS } from "../shared/avatars";
 import { createDirectory, directories, effectiveCwd } from "./directories";
@@ -21,7 +22,6 @@ import type { Activity, Mode } from "../shared/types";
 import { Store } from "./store";
 import { Harness } from "./harness";
 import { HttpError, JellyService } from "./service";
-import type { AppsAdapter } from "./apps-runtime";
 import { APP_ICON_MAX_BYTES } from "./apps-icons";
 export interface AppOptions {
   dataDir: string;
@@ -33,8 +33,8 @@ export interface AppOptions {
   loginTtlMs?: number;
   port?: number;
   allowedOrigins?: string[];
+  listenAddresses?: string[];
   staticDir?: string;
-  appsAdapter?: AppsAdapter;
 }
 const json = (value: unknown, status = 200) =>
   Response.json(value, {
@@ -163,7 +163,10 @@ export async function startApp(options: AppOptions) {
       socket?: Socket;
       detach?: () => void;
     }
-    const server = Bun.serve<VncData>({
+    const addresses = tailnetAddresses(options.listenAddresses ?? []);
+    const listenerOrigins = [...(options.allowedOrigins ?? [])];
+    const listeners: Bun.Server<VncData>[] = [];
+    const listenerOptions = {
       websocket: {
         open(ws) {
           if (
@@ -221,7 +224,7 @@ export async function startApp(options: AppOptions) {
       idleTimeout: 0,
       // Uploads stream to disk; JSON requests retain their own 64 KB limit.
       maxRequestBodySize: Number.MAX_SAFE_INTEGER,
-      async fetch(req) {
+      async fetch(req: Request, server: Bun.Server<VncData>) {
         const url = new URL(req.url);
         try {
           if (req.headers.has("x-jelly-managed-browser"))
@@ -232,7 +235,7 @@ export async function startApp(options: AppOptions) {
           const allowedHosts = new Set([
             `127.0.0.1:${server.port}`,
             `localhost:${server.port}`,
-            ...(options.allowedOrigins ?? []).map(
+            ...listenerOrigins.map(
               (origin) => new URL(origin).host,
             ),
           ]);
@@ -243,7 +246,7 @@ export async function startApp(options: AppOptions) {
             const allowed = new Set([
               `http://127.0.0.1:${server.port}`,
               `http://localhost:${server.port}`,
-              ...(options.allowedOrigins ?? []),
+              ...listenerOrigins,
             ]);
             if (origin && !allowed.has(origin))
               throw new HttpError(403, "This origin is not allowed.");
@@ -308,8 +311,7 @@ export async function startApp(options: AppOptions) {
               }
               if (req.method === "GET" && url.pathname === "/api/apps/capabilities") return json(await service.apps.capabilities());
               if (req.method === "POST" && url.pathname === "/api/apps/register") return json(service.apps.register(await body(req)));
-              if (req.method === "POST" && url.pathname === "/api/apps/deploy") return json(await service.apps.deploy(await body(req)));
-              const route = url.pathname.match(/^\/api\/apps\/([^/]+)(?:\/(star|launch|control|remove|logs|icon))?$/);
+              const route = url.pathname.match(/^\/api\/apps\/([^/]+)(?:\/(star|launch|remove|icon))?$/);
               if (route) {
                 const [, id, action] = route;
                 if (req.method === "GET" && !action) return json(service.apps.get(id!));
@@ -318,7 +320,6 @@ export async function startApp(options: AppOptions) {
                   return new Response(new Uint8Array(icon.bytes), { headers: { "Content-Type": icon.contentType, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Cross-Origin-Resource-Policy": "same-origin" } });
                 }
                 if (req.method === "POST" && action === "icon") return json(await service.apps.setIcon(id!, await iconBody(req)));
-                if (req.method === "GET" && action === "logs") return json(await service.apps.logs(id!, url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined));
                 if (req.method === "POST") {
                   const input = await body(req);
                   if (action === "star") {
@@ -326,13 +327,9 @@ export async function startApp(options: AppOptions) {
                     return json(service.apps.setStarred(id!, input.starred));
                   }
                   if (action === "launch") return json(service.apps.recordLaunch(id!, text(input.navigationId, "Navigation ID", 128)));
-                  if (action === "control") {
-                    if (!["start", "stop", "restart"].includes(input.action as string)) throw new HttpError(400, "Invalid app lifecycle action.");
-                    return json(await service.apps.control(id!, input.action as "start" | "stop" | "restart"));
-                  }
                   if (action === "remove") {
-                    if (typeof input.uninstall !== "boolean") throw new HttpError(400, "uninstall must be a boolean.");
-                    return json(await service.apps.remove(id!, { uninstall: input.uninstall }));
+                    if (Object.keys(input).length) throw new HttpError(400, "Removal only unregisters metadata; no options are supported.");
+                    return json(service.apps.remove(id!));
                   }
                 }
               }
@@ -853,7 +850,7 @@ export async function startApp(options: AppOptions) {
             headers: {
               "Content-Type": file.type,
               "X-Content-Type-Options": "nosniff",
-              "Content-Security-Policy": "frame-ancestors 'none'",
+              "Content-Security-Policy": "frame-ancestors 'none'; frame-src http: https:",
               "X-Frame-Options": "DENY",
               "Referrer-Policy": "no-referrer",
               "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), fullscreen=()",
@@ -874,29 +871,36 @@ export async function startApp(options: AppOptions) {
           );
         }
       },
-    });
+    } satisfies Bun.ServeOptions<VncData>;
+    const server = Bun.serve<VncData>(listenerOptions);
+    listeners.push(server);
     cleanup = async () => {
       connections.close();
       for (const finish of [...streams]) finish();
       // Abort tools/handoffs while closing HTTP: an in-flight request may itself
       // be waiting for one of those tools, so neither shutdown can await the other.
       const outcomes = await Promise.allSettled([
-        server.stop(true),
+        ...listeners.map(listener => listener.stop(true)),
         service.close(),
       ]);
       const failure = outcomes.find((outcome) => outcome.status === "rejected");
       if (failure?.status === "rejected") throw failure.reason;
     };
-    service.apps.configureOrigins([server.url.origin, `http://localhost:${server.port}`, ...(options.allowedOrigins ?? [])]);
-    service.chrome.protectOrigins([server.url.origin, `http://localhost:${server.port}`, ...(options.allowedOrigins ?? [])]);
+    listenerOrigins.push(...addresses.map(host => `http://${host.includes(":") ? `[${host}]` : host}:${server.port}`));
+    for (const hostname of addresses) {
+      listeners.push(Bun.serve<VncData>({ ...listenerOptions, hostname, port: server.port }));
+    }
+    service.apps.configureOrigins([server.url.origin, `http://localhost:${server.port}`, ...listenerOrigins]);
+    service.chrome.protectOrigins([server.url.origin, `http://localhost:${server.port}`, ...listenerOrigins]);
     service.computer.protectOrigins([
       server.url.origin,
       `http://localhost:${server.port}`,
-      ...(options.allowedOrigins ?? []),
+      ...listenerOrigins,
     ]);
     let closing: Promise<void> | undefined;
     return {
       server,
+      servers: listeners,
       service,
       store,
       close() {

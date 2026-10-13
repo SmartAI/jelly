@@ -1,8 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { LoaderCircle, Plus, Search, SearchX, Star } from "lucide-react";
-import type { AppRecord, AppsCapabilities } from "../shared/apps";
+import type { AppRecord } from "../shared/apps";
 import { appsApi } from "./api";
-import { appException } from "./app-origin";
 import { appFocusId } from "./apps-navigation";
 import { AppActions } from "./AppActions";
 
@@ -67,24 +66,22 @@ export function AppsHome({
   focusAppId,
   revision,
   changedApp,
-  onCapabilities,
   onLaunch,
   onDetails,
   onEdit,
   onBuild,
-  onControl,
+  onAdd,
   onRemove,
 }: {
   active: boolean;
   focusAppId: string | null;
   revision: number;
   changedApp: AppRecord | null;
-  onCapabilities: (capabilities: AppsCapabilities) => void;
-  onLaunch: (app: AppRecord, direct?: boolean) => void;
+  onLaunch: (app: AppRecord) => void;
   onDetails: (app: AppRecord) => void;
   onEdit: (app: AppRecord) => void;
   onBuild: () => void;
-  onControl: (app: AppRecord, action: "start" | "stop" | "restart") => void;
+  onAdd: () => void;
   onRemove: (app: AppRecord) => void;
 }) {
   const [apps, setApps] = useState<AppRecord[]>([]);
@@ -108,8 +105,6 @@ export function AppsHome({
   const restoringHome = useRef(false);
   const appsRef = useRef(apps);
   appsRef.current = apps;
-  const capabilitiesCallback = useRef(onCapabilities);
-  capabilitiesCallback.current = onCapabilities;
   const refreshNeeded = useRef(false);
   const [starRevision, setStarRevision] = useState(0);
   useEffect(() => {
@@ -172,7 +167,6 @@ export function AppsHome({
       );
       setAfter(result.after);
       setLoaded(true);
-      capabilitiesCallback.current(result.capabilities);
     } catch (error) {
       if (request === generation.current && !signal?.aborted)
         setError((error as Error).message);
@@ -309,7 +303,6 @@ export function AppsHome({
   }
   const grouped = sortApps(apps);
   function renderApp(app: AppRecord, tile: boolean) {
-    const exceptional = appException(app);
     return (
       <li
         key={app.id}
@@ -325,18 +318,7 @@ export function AppsHome({
           <AppIcon app={app} />
           <span className="app-launch-copy">
             <strong>{app.name}</strong>
-            {tile ? (
-              exceptional && (
-                <span className="app-exception">{exceptional}</span>
-              )
-            ) : (
-              <span className="app-launch-meta">
-                <span>{historyTime(app)}</span>
-                {exceptional && (
-                  <span className="app-exception">{exceptional}</span>
-                )}
-              </span>
-            )}
+            {!tile && <span className="app-launch-meta"><span>{historyTime(app)}</span></span>}
           </span>
         </button>
         <div className="app-row-actions">
@@ -357,9 +339,7 @@ export function AppsHome({
           <AppActions
             app={app}
             onDetails={() => onDetails(app)}
-            onNewTab={() => onLaunch(app, true)}
             onEdit={() => onEdit(app)}
-            onControl={(action) => onControl(app, action)}
             onRemove={() => onRemove(app)}
           />
         </div>
@@ -402,6 +382,7 @@ export function AppsHome({
             </span>
           </button>
         </header>
+        <button type="button" className="secondary apps-add" onClick={onAdd}>Add app</button>
         <label className="apps-search">
           <Search size={17} aria-hidden="true" />
           <span className="sr-only">Search apps</span>

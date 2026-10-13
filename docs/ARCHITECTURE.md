@@ -12,7 +12,7 @@ Bun HTTP server
 SQLite: instance / agents / runs / messages / events / interventions
 ```
 
-One data directory defines one instance. The instance UUID is created once and survives restarts. The default server binds to `127.0.0.1`; remote clients will use the same protocol after authentication and transport security are added in Phase 3.
+One data directory defines one instance. The instance UUID is created once and survives restarts. The default server binds to `127.0.0.1`. With `JELLY_TAILSCALE=1`, startup discovers explicit Tailscale IPs and creates additional native HTTP listeners sharing the same service, session state, fetch and WebSocket handlers. It never binds LAN or wildcard addresses. Network membership remains the access boundary; application-level remote owner authentication is still planned.
 
 ## Persistence contract
 
@@ -185,11 +185,19 @@ The React settings panel calls session/CSRF-protected `/api/auth/*` endpoints. `
 
 Credentials remain outside SQLite and durable events. Only the selected mode changes in the activity stream. The existing authenticated provider adapters use the same saved credentials on the next run. Tests cover automatic UI completion on local and Tailscale origins, private storage, session ownership, CSRF, cancellation, expiry, token redaction, and the installed Pi device-code request/poll/cancel path with mocked OpenAI responses.
 
-## Tailscale development transport
+## Private native HTTP listeners
 
-`bun run dev:tailscale` discovers this node's Tailscale IPs and DNS names. A fixed TCP forwarder listens on those IPs at port 5173 and pipes traffic to loopback Vite. The API remains on loopback at `JELLY_PORT` (3100 by default). The transport preserves HTTP, SSE and WebSocket upgrades; it has no arbitrary destination parameter and does not bind a LAN/wildcard address.
+Production `startApp` owns loopback and optional discovered Tailscale Bun HTTP listeners on one port. All listeners share the service, authentication/session store, exact host/origin checks, streaming events and computer WebSocket handlers. Partial startup failure closes every acquired listener and service. `scripts/serve.ts` supervises the backend only; no raw TCP piping is involved.
 
-The dev supervisor passes discovered origins through `JELLY_PUBLIC_ORIGINS`. Vite allows the exact external hostnames, and Jelly accepts the corresponding request origins and protects those same origins from its managed browser. Session/CSRF checks remain in place. Browser request IDs use secure random bytes on HTTP origins where `crypto.randomUUID` is unavailable. Tailnet network access provides the access boundary for this development mode; application-level remote authentication remains outstanding.
+`bun run dev:tailscale` discovers this node's Tailscale IPs and DNS names and starts separate native Vite HTTP listeners on loopback and those explicit IPs at port 5173. The API stays on loopback at `JELLY_PORT` (3100 by default); Vite's existing HTTP/WebSocket `/api` proxy reaches it. Each Vite listener owns its native HMR WebSocket endpoint. There is no arbitrary TCP destination, LAN or wildcard listener.
+
+The dev supervisor passes discovered origins through `JELLY_PUBLIC_ORIGINS`. Vite accepts exact configured hostnames and serves only frontend assets/SPA routes, not private data. Jelly accepts only the exact corresponding control origins and protects them from its managed browser. Session/CSRF checks remain intact; app URL registration never changes those origins. Request IDs support HTTP browsers lacking `crypto.randomUUID`. HTTP Tailscale is not a browser secure context; privately provisioned HTTPS aliases can be configured explicitly but Jelly does not provision TLS. Tailnet reachability from this host is not separate-device verification.
+
+## Trusted Apps registry
+
+Apps registers independently hosted owner-trusted HTTP(S) URLs as metadata, using `apps`, `app_launches` and `app_icon_assets`. Stable IDs/slugs, raster icons, attribution, explicit stars and history survive reopen. No app hosting, deployment, service manager, gateway, cookie rewriting, health probing or lifecycle state exists. Fresh schema creation retains unrelated versioned migrations and creates these metadata tables idempotently. The operator confirmed no existing apps/installations, so no Apps data migration or backward compatibility is supplied; old empty physical deployment tables are inert, not adopted.
+
+React `/apps/:id` renders exactly the saved URL in an iframe. External Back to Apps restores launcher focus/scroll; only viewer entry records a deduplicated visit. The frame permits ordinary scripts/forms/storage/downloads, but denies practical top-navigation/popups and privileged feature permissions. This is not app isolation: ports separate browser origins but not cookies; same-host app servers may receive Jelly HttpOnly credentials or set interfering cookies. Apps are trusted transitively. Exact control-origin/CSRF protections and Jelly's unframeable policy remain; iframe compatibility depends on app framing headers, HTTPS and framed authentication. See [Apps product/trust contract](APPS.md).
 
 ## ChatGPT model WebSocket transport
 

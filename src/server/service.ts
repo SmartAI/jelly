@@ -24,7 +24,7 @@ import { ChromeSessions } from "./chrome-sessions";
 import type { ChromeSelection } from "../shared/chrome-protocol";
 import { Interventions } from "./interventions";
 import { interventionTools } from "./agent-tools";
-import { AppsService, type AppsAdapter } from "./apps-service";
+import { AppsService } from "./apps";
 import { appsTools } from "./apps-tools";
 import type { SudoExecutor } from "./sudo";
 import { validateDirectory, effectiveCwd } from "./directories";
@@ -61,15 +61,11 @@ export class JellyService {
       sudoExecutor?: SudoExecutor;
       interventionTtlMs?: number;
       allowedOrigins?: string[];
-      appsAdapter?: AppsAdapter;
-      appsOptions?: Omit<ConstructorParameters<typeof AppsService>[1], "dataDir" | "allowedOrigins" | "emit">;
     } = {},
   ) {
     store.recover();
     this.subagents = new SubagentStore(store.db);
     this.apps = new AppsService(store, {
-      ...options.appsOptions,
-      appsAdapter: options.appsAdapter ?? options.appsOptions?.appsAdapter,
       dataDir: harness.dataDir,
       allowedOrigins: options.allowedOrigins,
       emit: (type: string, data: Record<string, unknown>) => this.emit(null, null, type, data),
@@ -832,8 +828,6 @@ export class JellyService {
     const states = [...this.active.values()];
     for (const state of states) { state.cancelled = true; state.naming?.abort(); }
     const outcomes = await Promise.allSettled([
-      // Stop observers only: app services are persistent and are not children of agent runs.
-      Promise.resolve().then(() => this.apps.close()),
       this.interventions.close(),
       ...states.map((state) =>
         state.session ? this.harness.stop(state.session) : Promise.resolve(),

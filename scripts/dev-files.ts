@@ -12,6 +12,28 @@ const canonical = (path: string) =>
 export function privateDevFiles(): Plugin {
   return {
     name: "jelly-private-dev-files",
+    config(config) {
+      // Vite's native Bun watcher must never crawl instance/browser socket trees
+      // or credential/configuration directories, even though HTTP reads are denied.
+      const root = resolve(config.root ?? process.cwd());
+      const privateDirectories = [
+        resolve(root, ".jelly"),
+        resolve(root, ".pi"),
+        resolve(root, process.env.JELLY_DATA_DIR ?? ".jelly"),
+        resolve(root, process.env.JELLY_AUTH_FILE ?? ".jelly/auth.json"),
+        resolve(
+          root,
+          process.env.JELLY_CONFIG_DIR ?? resolve(homedir(), ".jelly"),
+        ),
+      ];
+      return {
+        server: {
+          watch: {
+            ignored: privateDirectories.flatMap((path) => [path, `${path}/**`]),
+          },
+        },
+      };
+    },
     configureServer(server) {
       const root = server.config.root;
       const allowed = [
@@ -66,7 +88,7 @@ export function privateDevFiles(): Plugin {
         } else {
           const publicFile = resolve(root, "public", "." + path);
           file =
-            path === "/"
+            path === "/" || /^\/(?:apps|agents)(?:\/|$)/.test(path)
               ? resolve(root, "index.html")
               : existsSync(publicFile)
                 ? publicFile

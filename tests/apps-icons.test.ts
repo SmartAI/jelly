@@ -1,3 +1,4 @@
+import { fixtureBrowserPath } from "./fixtures/browser";
 import { afterEach, expect, test } from "bun:test";
 import {
   mkdtempSync,
@@ -149,7 +150,7 @@ test("native browser-generated PNG/JPEG/WebP raster formats validate and round-t
     url: "http://localhost:3007",
   });
   const browser = await chromium.launch({
-    executablePath: process.env.CHROME_BIN ?? "/usr/bin/google-chrome",
+    executablePath: fixtureBrowserPath(process.env.CHROME_BIN),
     headless: true,
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
   });

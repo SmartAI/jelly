@@ -9,6 +9,7 @@ import {
   existsSync,
   chmodSync,
   statSync,
+  realpathSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -21,7 +22,7 @@ afterEach(async () => {
   for (const c of cleanup.splice(0).reverse()) await c();
 });
 async function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), "jelly-projects-"));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "jelly-projects-")));
   cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
   const app = await startApp({
     dataDir: join(dir, "state"),

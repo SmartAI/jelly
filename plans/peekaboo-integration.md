@@ -1,8 +1,68 @@
 # Peekaboo integration — current Jelly web app
 
-Status: **proposed; not implemented or Mac-validated**. This plan adds Peekaboo
-support to Jelly's existing Bun backend and React web UI. It does **not** depend
-on building a native Jelly Mac app or completing the native macOS roadmap.
+Status: **official-release adapter implemented**, using unmodified signed
+Peekaboo 4.9.0 CLI/app. Desktop still starts off with exact operator app grants;
+there is no vendor-fork or exhaustive-certification enablement gate. This is the
+existing Bun/React web app, not a native Jelly host project.
+
+## Official-release implementation update
+
+Supersedes the earlier blanket-blocked/upstream-patch direction:
+
+- Use released CLI JSON lossless app generations and window discovery, never prose
+  authority. Fresh MCP target receipts and native producer-bound snapshots supply
+  subsequent scoped authority; discovery geometry is not a fabricated action receipt.
+- Retain one explicit-socket background-only MCP runtime. Native peer/session and
+  snapshot validation are authoritative; independent status diagnostics are guards,
+  not attestation of that retained connection. Jelly references bind to its epoch.
+- Wire actual AX observation, consented screenshots, background element/image-pixel
+  click, literal type, allowlisted key and element scroll. Advertise actual schemas,
+  enabled operations and OS permissions. Report unknown AX completeness/privacy;
+  redact values/labels and refuse known secure captures/input.
+- Native completed-but-effect-unverified delivery permits fresh verification, not
+  replay. Still-running/cancelled/lost work and unsafe cleanup retain quarantine;
+  private entry requires confirmed pause and explicit handback.
+- Menu mutation remains unavailable because the released schema cannot consume
+  our caller-generation/snapshot reference. Foreground remains unavailable without
+  an implemented explicit expiring per-run grant. No bypass or automatic escalation.
+- Isolated vendor edits are non-shipped research. No rebuilt/re-signed host, broker,
+  browser redesign, OS grant, live database or user-wide MCP changes.
+
+`tests/peekaboo-release.test.ts` and source-shaped JSON fixtures exercise actual SDK
+wire mapping and lifecycle boundaries. See [setup and limitations](../docs/PEEKABOO.md)
+and the [parent/operator synthetic fixture](../docs/PEEKABOO-LIVE-FIXTURE.md). No live
+native automation was performed by the detached implementation worker. The signed
+official artifacts are available; the existing legacy host was not altered.
+
+### Historical Mac reliability pass
+
+### Resolution follow-up
+
+**`bun run check` now passes on this Mac:** TypeScript, **606 tests / 0 failures /
+6,518 assertions**, production web build and Chrome extension build. The **3
+pre-existing Linux/X11 integration skips** remain explicit; no new safety tests
+were skipped. The real Mac headless SOCKS/TLS/WSS/WebRTC fixture ran (11 assertions).
+Focused Peekaboo tests: **76 / 0, 438 assertions**. Log:
+`/tmp/jelly-astra-check-complete.log`. This is not live desktop qualification.
+
+- Corrected reconnect status so prior host identity, capabilities and permissions
+  are cleared before a new attempt, including an unqualified replacement; added a
+  regression that also proves tools/resume stay blocked.
+- Canonicalized/shortened test-only Mac temporary roots without relaxing symlink
+  or Unix-socket length safety. Added installed-Chromium discovery for browser and
+  Apps fixtures, with explicit invalid-path refusal; the SOCKS transport safety
+  fixture no longer skips simply because `/usr/bin/google-chrome` is absent.
+- Fixed Apps socket validation's unsupported Mac `realpath(socket)` call while
+  retaining canonical owner-only parent/marker and `lstat` type/owner checks;
+  added real socket and symlink regressions. Forwarded the existing programmatic
+  `appsOptions` seam for test-owned socket roots; production defaults unchanged.
+  Native AgentBrowser tests assert Darwin refusal/no spawn rather than claiming
+  Linux-only collision behavior was exercised. No new safety-test skips.
+- Replaced Chrome bridge sleeps with bounded acknowledgement waits, raised fixture
+  startup budgets without changing protocol deadlines, and isolated test React/Pi
+  environment from production shells and inherited subagent runner identities.
+- Rechecked v4.9.0 source and official signatures. The earlier upstream metadata
+  handoff was subsequently superseded by the official-release adapter above.
 
 ## Scope
 
@@ -154,7 +214,8 @@ control; explicit handback requires a fresh observation.
   and can be sent to the chosen model provider. Use existing history/retention rules
   and define deletion behavior before enabling personal-app captures.
 - During private control, block observations/input and publication of late captures.
-  Sparse/custom surfaces with unknown privacy state must fail closed.
+  Unknown privacy/completeness must be reported honestly; known secure fields
+  refuse capture/input. Native exact-receiver refusals remain authoritative.
 
 ## Delivery checklist
 
@@ -169,10 +230,10 @@ control; explicit handback requires a fresh observation.
 
 ### B. Implement backend tools and web controls
 
-- [ ] Implement the adapter, run leases, reference fencing and restricted tool map.
-- [ ] Register tools and settlement cleanup through the existing service/harness.
+- [x] Implement the released adapter, run leases, reference fencing and restricted tool map.
+- [x] Register tools and settlement cleanup through the existing service/harness.
 - [ ] Add Settings/status, app grants, pause/stop/resume and foreground consent.
-- [ ] Add safe images and private handoff/browser coordination.
+- [x] Add consented bounded images and private handoff/browser coordination.
 - [ ] Preserve existing browsers, image history and user-wide MCP configuration.
 
 ### C. Validate and enable
@@ -187,8 +248,8 @@ control; explicit handback requires a fresh observation.
       implicitly. Precise unsupported-operation refusals are acceptable results.
 - [ ] Run `bun run check` before activating code changes; use temporary data and
       synthetic fixtures, never the live database or real credentials.
-- [ ] Document setup/recovery and enable only after the current-web-app integration
-      passes its gates. No native app packaging or browser port is part of delivery.
+- [x] Document official-release setup/recovery; enable available scoped capabilities
+      without a separate rollout gate. No native app packaging or browser port.
 
 ## Done when
 

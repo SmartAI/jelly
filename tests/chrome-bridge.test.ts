@@ -26,10 +26,20 @@ import {
   defaultChromeSelection,
 } from "../src/shared/chrome-protocol";
 import { Store } from "../src/server/store";
-import { chromeDenyRegexes } from "../src/shared/chrome-policy";
+import {
+  chromeDenyRegexes,
+  chromeInternetDenyRegexes,
+} from "../src/shared/chrome-policy";
 import { interventionTools } from "../src/server/agent-tools";
 import type { Interventions } from "../src/server/interventions";
-const sleep = (ms = 15) => new Promise((r) => setTimeout(r, ms));
+async function waitFor(ready: () => boolean) {
+  const deadline = Date.now() + 5000;
+  while (!ready()) {
+    if (Date.now() >= deadline)
+      throw new Error("Chrome fixture acknowledgement timed out");
+    await Bun.sleep(5);
+  }
+}
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "jelly-chrome-"));
   const bridge = new ChromeBridge(dir, "test-instance");
@@ -64,7 +74,7 @@ async function fixture() {
         ...overrides,
       }),
     );
-    await sleep();
+    await waitFor(() => messages.length > 0 || socket.destroyed);
     return { socket, messages };
   };
   return {
@@ -129,6 +139,62 @@ test("Chrome scope rejects local aliases, dangerous schemes, credentials and Jel
   ).toThrow();
   expect(chromeOrigin("https://example.com/path")).toBe("https://example.com");
 });
+test("Unrestricted Chrome scope allows public web sites and blocks local/control URLs and network requests", () => {
+  const protectedOrigins = ["http://jelly.example.com:3100"];
+  const rules = chromeInternetDenyRegexes(protectedOrigins).map(
+    (pattern) => new RegExp(pattern, "i"),
+  );
+  const blocked = (url: string) =>
+    rules.some((rule) => rule.test(new URL(url).href));
+  for (const url of [
+    "https://unlisted.example/path",
+    "http://unlisted.example:8080/path",
+    "https://1.1.1.1/path",
+    "https://[2606:4700:4700::1111]/path",
+    "https://jelly.example.com.evil.example/path",
+    "https://public.example./path",
+  ]) {
+    expect(chromeOrigin(url, protectedOrigins, false, "internet")).toBe(
+      new URL(url).origin,
+    );
+    expect(blocked(url)).toBe(false);
+  }
+  for (const url of [
+    "http://localhost/",
+    "https://localhost./",
+    "http://machine/",
+    "https://box.home.arpa/",
+    "https://127.0.0.1.nip.io/",
+    "https://box.tailnet.ts.net/",
+    "http://127.0.0.1/",
+    "http://2130706433/",
+    "http://10.0.0.1/",
+    "http://172.31.1.1/",
+    "http://192.168.1.1/",
+    "http://169.254.169.254/",
+    "http://100.91.31.77/",
+    "http://198.18.0.1/",
+    "http://[::1]/",
+    "http://[fc00::1]/",
+    "http://[::ffff:127.0.0.1]/",
+    "http://[200::1]/",
+    "https://jelly.example.com:444/",
+    "https://jelly.example.com./",
+    "file:///tmp/file",
+    "chrome://settings/",
+  ]) {
+    expect(() =>
+      chromeOrigin(url, protectedOrigins, false, "internet"),
+    ).toThrow();
+    expect(blocked(url)).toBe(true);
+  }
+  expect(() =>
+    chromeOrigin("https://user:pass@example.com/", [], false, "internet"),
+  ).toThrow();
+  expect(blocked("wss://localhost/socket")).toBe(true);
+  expect(blocked("wss://public.example/socket")).toBe(false);
+});
+
 test("Chrome bridge authenticates profile/generation, isolates requests and rejects stale connections", async () => {
   const f = await fixture();
   try {
@@ -157,7 +223,7 @@ test("Chrome bridge authenticates profile/generation, isolates requests and reje
       "snapshot",
       { tab: "cap" },
     );
-    await sleep();
+    await waitFor(() => p.messages.length >= 2);
     const req = p.messages[1];
     expect(req.session).toBe("session");
     expect(other.messages).toHaveLength(1);
@@ -182,7 +248,7 @@ test("Chrome bridge authenticates profile/generation, isolates requests and reje
       {},
     );
     void indeterminate.catch(() => {});
-    await sleep();
+    await waitFor(() => p.messages.length >= 3);
     p.socket.destroy();
     await expect(indeterminate).rejects.toThrow("indeterminate");
   } finally {
@@ -303,6 +369,69 @@ test("Chrome DNR deny rules match unapproved redirect origins, port changes and 
     expect(denied(url)).toBe(true);
 });
 
+test("ChromeSessions pins unrestricted access and sends its scope to the extension", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "jelly-chrome-internet-"));
+  const chrome = new ChromeSessions(dir, "instance");
+  const profile = crypto.randomUUID();
+  const calls: { method: string; params: Record<string, unknown> }[] = [];
+  chrome.bridge.profiles = () => [
+    { id: profile, generation: crypto.randomUUID(), connected: true },
+  ];
+  chrome.bridge.call = async (
+    _profile,
+    _generation,
+    _session,
+    _run,
+    method,
+    params,
+  ) => {
+    calls.push({ method, params });
+    return method === "open" ? { pageId: crypto.randomUUID() } : { ok: true };
+  };
+  chrome.protectOrigins(["http://jelly.example.com:3100"]);
+  const selection = {
+    browserTarget: "chrome" as const,
+    chromeProfile: profile,
+    chromeOrigins: [],
+    chromeSiteScope: "internet" as const,
+  };
+  try {
+    const browser = chrome.allocate("agent", "run", selection, "Agent");
+    await browser.action("open", { url: "http://unlisted.example/path" });
+    await browser.action("open", { url: "https://another.example/path" });
+    expect(calls[0]?.params).toMatchObject({
+      siteScope: "internet",
+      origins: [],
+    });
+    expect(chrome.state("agent").task?.siteScope).toBe("internet");
+    await expect(
+      browser.action("open", { url: "http://localhost/" }),
+    ).rejects.toThrow();
+    await expect(
+      browser.action("open", { url: "https://jelly.example.com:444/" }),
+    ).rejects.toThrow();
+    await chrome.settle("agent", "run");
+    const next = chrome.allocate(
+      "agent",
+      "next",
+      {
+        ...selection,
+        chromeSiteScope: "approved",
+        chromeOrigins: ["https://approved.example"],
+      },
+      "Agent",
+    );
+    await next.action("open", { url: "https://still-unlisted.example/" });
+    expect(
+      calls.filter((c) => c.method === "begin").at(-1)?.params.siteScope,
+    ).toBe("internet");
+    await chrome.settle("agent", "next");
+  } finally {
+    await chrome.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("ChromeSessions pins profile/scope and exact caps; pause, unsupported tools and loss fail closed", async () => {
   const dir = mkdtempSync(join(tmpdir(), "jelly-chrome-sessions-"));
   const chrome = new ChromeSessions(dir, "instance");
@@ -415,7 +544,7 @@ test("Chrome bridge retains large requests until socket drain and authenticates 
       "fill",
       { text: payload },
     );
-    for (let i = 0; i < 100 && p.messages.length < 2; i++) await sleep();
+    await waitFor(() => p.messages.length >= 2);
     expect(p.messages[1]?.params.text).toBe(payload);
     p.socket.write(
       chromeFrame({
@@ -435,7 +564,7 @@ test("Chrome bridge retains large requests until socket drain and authenticates 
         tab: "cap",
       }),
     );
-    await sleep();
+    await waitFor(() => removals.length > 0);
     expect(removals).toEqual([[profile, generation, "session", "run", "cap"]]);
     p.socket.write(
       chromeFrame({
@@ -446,7 +575,7 @@ test("Chrome bridge retains large requests until socket drain and authenticates 
         tab: "cap",
       }),
     );
-    await sleep();
+    await waitFor(() => p.socket.destroyed);
     expect(removals).toHaveLength(1);
     expect(p.socket.destroyed).toBe(true);
   } finally {
@@ -676,7 +805,7 @@ test("Chrome protocol bounds exact input, rejects browser shortcuts, and authent
         tab: "cap",
       }),
     );
-    await sleep();
+    await waitFor(() => added.length > 0);
     expect(added).toEqual([[profile, generation, "session", "run", "cap"]]);
     p.socket.write(
       chromeFrame({
@@ -687,7 +816,7 @@ test("Chrome protocol bounds exact input, rejects browser shortcuts, and authent
         tab: "cap",
       }),
     );
-    await sleep();
+    await waitFor(() => p.socket.destroyed);
     expect(added).toHaveLength(1);
     expect(p.socket.destroyed).toBe(true);
   } finally {
@@ -758,7 +887,7 @@ test("ChromeSessions pause revokes authority but never reports human-safe before
         operation === "fill" ? { ref: "ref", text: "fixture" } : {},
       );
       const outcome = pending.catch(() => "revoked");
-      await sleep();
+      await waitFor(() => calls.at(-1) === operation);
       expect(calls.at(-1)).toBe(operation);
       const pausing = f.chrome.control("agent", "pause");
       expect(f.chrome.state("agent").task).toMatchObject({
@@ -822,7 +951,7 @@ test("ChromeSessions private login stays preparing through open, mark and delaye
       "https://example.com/login",
     );
     for (const method of ["open", "mark", "pause"] as const) {
-      await sleep();
+      await waitFor(() => calls.at(-1) === method);
       expect(calls.at(-1)).toBe(method);
       expect(f.chrome.state("agent").task).toMatchObject({
         paused: false,
@@ -990,7 +1119,7 @@ test("Chrome bridge binds all pause states to an authenticated generation and ru
           state,
         }),
       );
-    await sleep();
+    await waitFor(() => states.length === 3);
     expect(states).toEqual(
       ["pausing", "failed", "paused"].map((state) => [
         profile,
@@ -1009,7 +1138,7 @@ test("Chrome bridge binds all pause states to an authenticated generation and ru
         state: "paused",
       }),
     );
-    await sleep();
+    await waitFor(() => p.socket.destroyed);
     expect(p.socket.destroyed).toBe(true);
     expect(states).toHaveLength(3);
   } finally {

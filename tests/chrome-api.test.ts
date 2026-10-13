@@ -68,6 +68,32 @@ test("Connected Chrome settings require private control and persist separately f
         .get(agent.id),
     ).toThrow("disconnected");
     expect(app.service.computer.state(agent.id).status).toBe("stopped");
+    const internet = {
+      ...settings,
+      chromeOrigins: [],
+      chromeSiteScope: "internet" as const,
+    };
+    for (const [scope, expected] of [
+      ["internet", 200],
+      ["approved", 400],
+      ["anything", 400],
+      [true, 400],
+    ] as const) {
+      expect(
+        (
+          await fetch(`${origin}/api/chrome/settings`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ ...internet, chromeSiteScope: scope }),
+          })
+        ).status,
+      ).toBe(expected);
+    }
+    expect(app.store.browserSelection()).toEqual(internet);
+    expect(app.service.snapshot().config.chromeSiteScope).toBe("internet");
+    expect(() =>
+      app.service.setConfig({ agentId: agent.id, chromeSiteScope: "internet" }),
+    ).toThrow("global");
     expect(
       (
         await fetch(`${origin}/api/computer/start?agentId=${agent.id}`, {

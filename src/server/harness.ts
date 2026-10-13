@@ -1,7 +1,7 @@
 import { generatedAgentName } from "../shared/agent-names";
 import { Mcps } from "./mcps";
 import { ChatGPTTransport } from "./chatgpt-transport";
-import { ultrafastOptions } from "./ultrafast";
+import { serviceTierOptions } from "./service-tier";
 import { GeneratedImages, imageGenerationTool } from "./image-generation";
 import { RenderedFiles, renderFileTool } from "./rendered-files";
 import { applyPatchTool } from "./apply-patch";
@@ -19,6 +19,7 @@ import {
   DEFAULT_MODEL,
   DEFAULT_EFFORT,
   upstreamModel,
+  modelServiceTier,
   type ModelId,
   type Effort,
 } from "../shared/models";
@@ -41,6 +42,7 @@ import {
 import type { Message } from "@earendil-works/pi-ai";
 import type { AgentRecord, ConnectionConfig, Mode } from "../shared/types";
 import { HttpError } from "./errors";
+import { DESKTOP_INSTRUCTIONS } from "../shared/desktop";
 
 export class Harness {
   private sessions = new WeakMap<AgentSession, SessionWork>();
@@ -129,7 +131,7 @@ export class Harness {
       reasoning: "minimal",
       maxRetries: 0,
       transport: "sse",
-      ...(config.selectedModel === "gpt-6-astra-ultrafast" ? ultrafastOptions({}) : {}),
+      ...serviceTierOptions({}, modelServiceTier(config.selectedModel)),
     });
     if (result.stopReason !== "stop" || result.content.some(part => part.type === "toolCall")) return null;
     return generatedAgentName(result.content.filter(part => part.type === "text").map(part => part.text).join(""));
@@ -185,8 +187,9 @@ export class Harness {
       // or the previously supported APPEND_SYSTEM.md instructions.
       systemPrompt: "",
       appendSystemPromptOverride: (prompts) => [
-        `You are ${agent.name}, a persistent agent in Jelly.\n${agent.instructions}\nYou can inspect this Jelly instance with instance_info. All tools and subagent delegation are pre-authorized by the operator. Execute tasks directly without approval prompts. You can browse directories, read/write/edit files, run shell commands, and delegate to subagents. Use the same provider/model and effort as this parent for delegated work unless asked otherwise. Prefer asynchronous subagent workflows (async:true) so you can supervise children and respond to status updates. Yield while children work; native completion notifications and approximately five-minute status checkpoints wake this session. Do not block with bg_wait merely to await ordinary async subagents. Use async:false only for deliberately short blocking work. Use the installed subagent tool schema; do not ask for delegation approval. Use render_file to show existing images, audio, video, or text files in chat without reading their contents into model context; no prior read call is needed. You may use all Pi tools; the workspace directory is a default working directory, not a sandbox. Use request_sudo for privileged commands; it executes automatically when the OS allows, and requests a password only if authentication is needed. Never ask for passwords in chat. Use request_browser_login when a website requires sign-in; a person will take over the browser privately and explicitly return control. Browser tools are unavailable during human control. Do not put credentials in tool arguments. Be clear about your capabilities.\n${WEB_RESEARCH_INSTRUCTIONS}\n${APPS_INSTRUCTIONS}\n${this.mcps.instructions()}`,
+        `You are ${agent.name}, a persistent agent in Jelly.\n${agent.instructions}\nYou can inspect this Jelly instance with instance_info. All tools and subagent delegation are pre-authorized by the operator. Execute tasks directly without approval prompts. You can browse directories, read/write/edit files, run shell commands, and delegate to subagents. Use the same provider/model and effort as this parent for delegated work unless asked otherwise. Prefer asynchronous subagent workflows (async:true) so you can supervise children and respond to status updates. Yield while children work; native completion notifications and approximately five-minute status checkpoints wake this session. Do not block with bg_wait merely to await ordinary async subagents. Use async:false only for deliberately short blocking work. Use the installed subagent tool schema; do not ask for delegation approval. Use render_file to show existing images, audio, video, or text files in chat without reading their contents into model context; no prior read call is needed. You may use all Pi tools; the workspace directory is a default working directory, not a sandbox. Use request_sudo for privileged commands; it executes automatically when the OS allows, and requests a password only if authentication is needed. Never ask for passwords in chat. ${extraTools.some(tool => tool.name === "browser_keep_tab") ? "Browser target: Connected Chrome plugin, using the user's existing profile. No managed browser viewer, Computer panel, or managed-browser controls are available. Use only the advertised Chrome tools and exact snapshot references; no coordinates, free typing, diagnostics, or uploads. For sign-in use request_browser_login. If Chrome is paused, the user returns control via Settings → Browser target → This agent’s pinned Chrome session → Resume, or the Chrome sign-in card—not through chat or a managed browser toolbar. Never claim to have resumed Chrome yourself." : "Browser target: Jelly managed browser. Use request_browser_login when a website requires sign-in; a person will take over the managed browser privately and explicitly return control. Browser tools are unavailable during human control."} Do not put credentials in tool arguments. Be clear about your capabilities.\n${WEB_RESEARCH_INSTRUCTIONS}\n${APPS_INSTRUCTIONS}\n${this.mcps.instructions()}`,
         ...prompts,
+        DESKTOP_INSTRUCTIONS,
       ],
     });
     initTheme("dark");
@@ -276,12 +279,13 @@ export class Harness {
         return result;
       };
     }
-    if (config.selectedModel === "gpt-6-astra-ultrafast") {
+    const tier = modelServiceTier(config.selectedModel);
+    if (tier) {
       const stream = session.agent.streamFunction;
       // Covers tool continuations and native compaction as well as chat turns.
       // Keep this inside the transport wrapper so reconnect/SSE recovery retains it.
       session.agent.streamFunction = (model, context, options) =>
-        stream(model, context, ultrafastOptions(options ?? {}));
+        stream(model, context, serviceTierOptions(options ?? {}, tier));
     }
     if (config.activeMode === "chatgpt") this.chatgptTransport.bind(session, agent.id);
     else this.chatgptTransport.reset(agent.id);

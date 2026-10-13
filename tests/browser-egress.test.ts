@@ -9,11 +9,14 @@ import {
 class Wire {
   buffer = Buffer.alloc(0);
   closed = false;
+  errors: string[] = [];
   constructor(readonly socket: Socket) {
     socket.on("data", (data) => {
       this.buffer = Buffer.concat([this.buffer, Buffer.from(data)]);
     });
-    socket.on("error", () => {});
+    socket.on("error", (error: NodeJS.ErrnoException) => {
+      this.errors.push(error.code ?? error.message);
+    });
     socket.on("close", () => {
       this.closed = true;
     });
@@ -161,7 +164,9 @@ test("fragmented SOCKS handshake forwards opaque bytes and revokes already conne
 test("HTTP streaming, cancellation and shutdown preserve opaque transport without buffering", async () => {
   const f = await fixture();
   let cancelled = false;
+  let connections = 0;
   const origin = createServer((socket) => {
+    connections++;
     socket.once("data", () =>
       socket.write(
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nfirst-event\n",
@@ -185,9 +190,16 @@ test("HTTP streaming, cancellation and shutdown preserve opaque transport withou
     for (let i = 0; i < 100 && !cancelled; i++) await Bun.sleep(10);
     expect(cancelled).toBe(true);
     const incomplete = await f.open();
-    const closed = once(incomplete.socket, "close");
+    // macOS may report ECONNRESET before close when the proxy destroys an
+    // incomplete SOCKS handshake. events.once(close) rejects on that error.
+    const closed = new Promise<void>((resolve) =>
+      incomplete.socket.once("close", () => resolve()),
+    );
     await f.proxy.close();
     await closed;
+    expect(incomplete.socket.destroyed).toBe(true);
+    expect(incomplete.errors.every((code) => code === "ECONNRESET")).toBe(true);
+    expect(connections).toBe(1);
   } finally {
     wire.socket.destroy();
     await f.proxy.close();

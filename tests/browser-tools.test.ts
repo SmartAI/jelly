@@ -11,18 +11,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readBrowserUploadFiles } from "../src/server/browser-upload";
 import type { EventEmitter } from "node:events";
+import { fixtureBrowserPath } from "./fixtures/browser";
 let browser: Browser;
 const directory = mkdtempSync(join(tmpdir(), "jelly-browser-tools-test-"));
 beforeAll(async () => {
   browser = await chromium.launch({
-    executablePath: process.env.JELLY_BROWSER_PATH ?? "/usr/bin/google-chrome",
+    executablePath: fixtureBrowserPath(),
     headless: true,
   });
-});
+}, 30000);
 afterAll(async () => {
   await browser?.close();
   rmSync(directory, { recursive: true, force: true });
-});
+}, 30000);
 async function fixture() {
   const context = await browser.newContext({
     viewport: { width: 640, height: 480 },
@@ -203,8 +204,12 @@ test("reference click, secret-name rejection, failed requests and in-flight hand
     await f.page.locator("#normal").evaluate(el => el.setAttribute("name", "api_token"));
     await expect(f.computer.action("fill", { ref: s.elements[0]!.ref, text: "blocked" })).rejects.toThrow("request_browser_login");
     await f.context.route("https://fixture.invalid/**", route => route.abort());
+    const failed = f.page.waitForEvent("requestfailed", {
+      predicate: request => request.url().startsWith("https://fixture.invalid/"),
+      timeout: 10000,
+    });
     await f.page.evaluate(() => { void fetch("https://fixture.invalid/?secret=PRIVATE").catch(() => {}); });
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await failed;
     const diagnostic = JSON.stringify(await f.computer.action("diagnostics"));
     expect(diagnostic).toContain("requestfailed");
     expect(diagnostic).not.toContain("PRIVATE");
@@ -413,7 +418,7 @@ test("chooser timeout removes interception without selecting anything", async ()
     })).rejects.toThrow("No file chooser");
     expect((f.page as unknown as EventEmitter).listenerCount("filechooser")).toBe(0);
   } finally { await f.computer.close(); }
-}, 10000);
+}, 30000);
 
 test("handoff and abort cancel chooser waits, remove interception, and never select a file", async () => {
   const f = await fixture();

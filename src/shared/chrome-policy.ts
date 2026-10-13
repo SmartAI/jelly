@@ -1,3 +1,5 @@
+import { CHROME_LOCAL_HOST_PATTERNS } from "./chrome-protocol";
+
 /** RE2-compatible complement of finite approved URL prefixes, split into small
  * block-only rules, avoiding priority interactions with allow exemptions.
  * Splitting avoids Chrome's 2 KiB compiled-regex limit. Callers must explicitly
@@ -29,4 +31,22 @@ export function chromeDenyRegexes(origins: string[]): string[] {
   if (!origins.length) return [".*"];
   visit(root, "");
   return result;
+}
+
+/** Public web access without an origin allowlist; keep local/control traffic blocked. */
+export function chromeInternetDenyRegexes(
+  protectedOrigins: string[],
+  fixture = false,
+): string[] {
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
+  const hosts = protectedOrigins.map((origin) =>
+    escape(new URL(origin).hostname.replace(/\.+$/, "")),
+  );
+  return [
+    ...chromeDenyRegexes(["http:/", "https:/", "ws:/", "wss:/"]),
+    ...[...(fixture ? [] : CHROME_LOCAL_HOST_PATTERNS), ...hosts].map(
+      (host) =>
+        `^(?:https?|wss?)://(?:[^/@]+@)?(?:${host})\\.*(?::[0-9]+)?(?:/|$)`,
+    ),
+  ];
 }

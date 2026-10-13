@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  mkdirSync,
+  writeFileSync,
+} from "node:fs";
+import { Database } from "bun:sqlite";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import type { Snapshot } from "../src/shared/types";
@@ -18,7 +26,7 @@ async function launch(dir: string) {
   });
   const reader = child.stdout.getReader();
   let log = "";
-  const timeout = setTimeout(() => child.kill("SIGKILL"), 5000);
+  const timeout = setTimeout(() => child.kill("SIGKILL"), 15000);
   try {
     while (true) {
       const part = await reader.read();
@@ -124,7 +132,7 @@ test("a fresh process recovers SQLite identity, profiles, transcript and interru
     await process.child.exited;
     rmSync(dir, { recursive: true, force: true });
   }
-}, 15000);
+}, 45000);
 
 test("idle restart readiness uses public health, not unauthenticated private state", async () => {
   const script = await Bun.file(
@@ -239,4 +247,375 @@ test("restart helper discovers canonical private origins without restart, live r
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("macOS restart defaults follow the installed LaunchDaemon and reject a different checkout", async () => {
+  const root = mkdtempSync(join(tmpdir(), "jelly-restart-launchd-"));
+  try {
+    mkdirSync(join(root, "scripts"));
+    const helper = join(root, "scripts", "restart-when-idle.sh");
+    writeFileSync(
+      helper,
+      await Bun.file(
+        new URL("../scripts/restart-when-idle.sh", import.meta.url),
+      ).text(),
+    );
+    const plist = join(root, "service.plist");
+    const defaults = async (overrides: Record<string, unknown> = {}) => {
+      const write = Bun.spawnSync(
+        [
+          "/usr/bin/python3",
+          "-c",
+          "import json, plistlib, sys; plistlib.dump(json.load(sys.stdin), open(sys.argv[1], 'wb'))",
+          plist,
+        ],
+        {
+          stdin: Buffer.from(
+            JSON.stringify({
+              Label: "com.jelly.server",
+              WorkingDirectory: root,
+              EnvironmentVariables: {
+                JELLY_PORT: "3100",
+                JELLY_DATA_DIR: "instance data",
+                PRIVATE_TOKEN: "must-never-be-printed",
+              },
+              ...overrides,
+            }),
+          ),
+        },
+      );
+      expect(write.exitCode).toBe(0);
+      const child = Bun.spawn(
+        [
+          "/bin/bash",
+          "-c",
+          'source "$1"; macos_restart_defaults "$2"',
+          "test",
+          helper,
+          plist,
+        ],
+        {
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const [code, output, error] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      return { code, output: output.trim(), error };
+    };
+    expect(await defaults()).toEqual({
+      code: 0,
+      output: `3100\n${join(realpathSync(root), "instance data")}`,
+      error: "",
+    });
+    expect(await defaults({ EnvironmentVariables: {} })).toEqual({
+      code: 0,
+      output: `5173\n${join(realpathSync(root), ".jelly")}`,
+      error: "",
+    });
+    for (const overrides of [
+      { Label: "com.other.server" },
+      { WorkingDirectory: join(root, "other-checkout") },
+      { EnvironmentVariables: { JELLY_DATA_DIR: "bad\npath" } },
+    ]) {
+      const result = await defaults(overrides);
+      expect(result.code).toBe(1);
+      expect(result.output).toBe("");
+      expect(result.error).toContain("Cannot read Jelly settings");
+      expect(result.error).not.toContain("must-never-be-printed");
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+async function idleRestartFixture(
+  options: {
+    platform?: string;
+    uid?: string;
+    busy?: boolean;
+    hold?: "repo" | "data";
+    release?: boolean;
+    missingDatabase?: boolean;
+    denied?: boolean;
+    loaded?: boolean;
+    healthy?: boolean;
+    active?: boolean;
+    port?: string;
+  } = {},
+) {
+  const root = mkdtempSync(join(tmpdir(), "jelly-restart-helper-"));
+  const data = join(root, "instance data");
+  mkdirSync(join(root, "scripts"));
+  mkdirSync(join(root, "bin"));
+  mkdirSync(data);
+  const helper = join(root, "scripts", "restart-when-idle.sh");
+  writeFileSync(
+    helper,
+    await Bun.file(
+      new URL("../scripts/restart-when-idle.sh", import.meta.url),
+    ).text(),
+  );
+  if (!options.missingDatabase) {
+    const db = new Database(join(data, "jelly.sqlite"));
+    db.exec("CREATE TABLE runs (status TEXT NOT NULL)");
+    db.query("INSERT INTO runs (status) VALUES (?)").run(
+      options.busy ? "running" : "completed",
+    );
+    db.close();
+  }
+  if (options.hold) {
+    const holds = join(
+      options.hold === "repo" ? join(root, ".jelly") : data,
+      "restart-holds",
+    );
+    mkdirSync(holds, { recursive: true });
+    writeFileSync(join(holds, "fixture"), "owner-managed hold");
+  }
+  writeFileSync(
+    join(root, "bin", "tailscale"),
+    `#!/bin/bash
+printf '%s\\n' '{"BackendState":"Running","TailscaleIPs":["100.64.0.2"],"Self":{"DNSName":"fixture.tailtest.ts.net."}}'
+`,
+    { mode: 0o700 },
+  );
+  const log = join(root, "commands.log");
+  // Source a copy, then replace every service/mutation command before running its loop.
+  // No fake command delegates to the host's real launchctl, sudo, systemctl or curl.
+  const wrapper = `
+source "$1"
+uname() { printf '%s\\n' "$JELLY_RESTART_TEST_PLATFORM"; }
+id() { printf '%s\\n' "$JELLY_RESTART_TEST_UID"; }
+macos_restart_defaults() { printf '%s\\n' 3100 "$JELLY_RESTART_TEST_DATA"; }
+# Use a fixed busy count for the 360-poll timeout test; transition tests use real SQLite.
+if [ "$JELLY_RESTART_TEST_STAY_BUSY" = 1 ]; then
+  active_restart_runs() { printf '%s\\n' 1; }
+fi
+record() { printf '%s\\n' "$*" >> "$JELLY_RESTART_TEST_LOG"; }
+launchctl() {
+  record launchctl "$@"
+  if [ "$1" = print ]; then
+    [ "$JELLY_RESTART_TEST_LOADED" = 1 ] || return 1
+    if [ "$JELLY_RESTART_TEST_ACTIVE" = 1 ]; then
+      printf 'system/com.jelly.server = {\\n\\tstate = running\\n}\\n'
+    else
+      printf 'system/com.jelly.server = {\\n\\tstate = waiting\\n}\\n'
+    fi
+  fi
+}
+sudo() {
+  record sudo "$@"
+  [ "$JELLY_RESTART_TEST_DENIED" = 0 ] || return 1
+  [ "$1" = -n ] || return 99
+  shift
+  "$@"
+}
+systemctl() {
+  record systemctl "$@"
+  if [ "$2" = is-active ] && [ "$4" = jelly.service ]; then
+    [ "$JELLY_RESTART_TEST_ACTIVE" = 1 ]
+  fi
+}
+curl() { record curl "$@"; [ "$JELLY_RESTART_TEST_HEALTHY" = 1 ]; }
+sleep() {
+  record sleep "$@"
+  if [ "$1" = 5 ] && [ "$JELLY_RESTART_TEST_RELEASE" = 1 ]; then
+    /bin/rm -f "$repo/.jelly/restart-holds/fixture" "$JELLY_RESTART_TEST_DATA/restart-holds/fixture"
+    /usr/bin/python3 -c 'import sqlite3, sys; db=sqlite3.connect(sys.argv[1]); db.execute("UPDATE runs SET status=?", ("completed",)); db.commit(); db.close()' "$JELLY_RESTART_TEST_DATA/jelly.sqlite"
+  fi
+}
+restart_main
+`;
+  try {
+    const platform = options.platform ?? "Darwin";
+    const child = Bun.spawn(["/bin/bash", "-c", wrapper, "test", helper], {
+      env: {
+        ...process.env,
+        PATH: `${join(root, "bin")}:/usr/bin:/bin`,
+        // Linux normally uses repo/.jelly; this also covers its data-dir override.
+        JELLY_DATA_DIR: platform === "Linux" ? data : undefined,
+        JELLY_RESTART_PORT: options.port,
+        JELLY_RESTART_TEST_PLATFORM: platform,
+        JELLY_RESTART_TEST_UID: options.uid ?? "501",
+        JELLY_RESTART_TEST_DATA: data,
+        JELLY_RESTART_TEST_LOG: log,
+        JELLY_RESTART_TEST_RELEASE: options.release ? "1" : "0",
+        JELLY_RESTART_TEST_STAY_BUSY:
+          options.busy && !options.release ? "1" : "0",
+        JELLY_RESTART_TEST_DENIED: options.denied ? "1" : "0",
+        JELLY_RESTART_TEST_LOADED: options.loaded === false ? "0" : "1",
+        JELLY_RESTART_TEST_HEALTHY: options.healthy === false ? "0" : "1",
+        JELLY_RESTART_TEST_ACTIVE: options.active === false ? "0" : "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [code, output, error] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    return {
+      code,
+      output,
+      error,
+      commands: existsSync(log)
+        ? (await Bun.file(log).text()).trim().split("\n")
+        : [],
+      databaseExists: existsSync(join(data, "jelly.sqlite")),
+    };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+for (const platform of ["Darwin", "Linux"]) {
+  test(`idle helper waits for running agents before restarting ${platform} and verifies both HTTP origins`, async () => {
+    const result = await idleRestartFixture({
+      platform,
+      busy: true,
+      release: true,
+    });
+    expect(result.code).toBe(0);
+    expect(result.error).toBe("");
+    expect(result.output).toContain(
+      "Verified Jelly on loopback and private Tailscale",
+    );
+    const restart =
+      platform === "Darwin"
+        ? "launchctl kickstart -k system/com.jelly.server"
+        : "systemctl --user reload-or-restart jelly.service";
+    expect(result.commands.indexOf("sleep 5")).toBeLessThan(
+      result.commands.indexOf(restart),
+    );
+    expect(
+      result.commands.filter((command) => command === restart),
+    ).toHaveLength(1);
+    if (platform === "Darwin") {
+      expect(result.commands).toContain(
+        "sudo -n launchctl kickstart -k system/com.jelly.server",
+      );
+      expect(
+        result.commands.some((command) => command.startsWith("systemctl")),
+      ).toBe(false);
+    } else {
+      expect(result.commands).toContain(
+        "systemctl --user stop jelly-dev.service",
+      );
+      expect(
+        result.commands.indexOf("systemctl --user daemon-reload"),
+      ).toBeLessThan(result.commands.indexOf(restart));
+      expect(
+        result.commands.some((command) => command.startsWith("launchctl")),
+      ).toBe(false);
+    }
+    const port = platform === "Darwin" ? 3100 : 5173;
+    expect(
+      result.commands
+        .filter((command) => command.startsWith("curl "))
+        .map((command) => command.split(" ").at(-1)),
+    ).toEqual([
+      `http://127.0.0.1:${port}/`,
+      `http://127.0.0.1:${port}/api/health`,
+      `http://fixture.tailtest.ts.net:${port}/`,
+      `http://fixture.tailtest.ts.net:${port}/api/health`,
+    ]);
+  });
+
+  test(`idle helper leaves ${platform} running when agents stay busy`, async () => {
+    const result = await idleRestartFixture({ platform, busy: true });
+    expect(result.code).toBe(1);
+    expect(result.error).toContain(
+      "remained busy for 30 minutes; no restart performed",
+    );
+    expect(
+      result.commands.filter((command) => command === "sleep 5"),
+    ).toHaveLength(360);
+    expect(
+      result.commands.some((command) =>
+        /kickstart|reload-or-restart|^sudo |^curl /.test(command),
+      ),
+    ).toBe(false);
+  });
+}
+
+for (const hold of ["repo", "data"] as const) {
+  test(`macOS idle helper respects ${hold} restart holds even with no running agents`, async () => {
+    const held = await idleRestartFixture({ hold });
+    expect(held.code).toBe(1);
+    expect(
+      held.commands.some((command) => /kickstart|^sudo |^curl /.test(command)),
+    ).toBe(false);
+    const released = await idleRestartFixture({
+      hold,
+      release: true,
+      uid: "0",
+    });
+    expect(released.code).toBe(0);
+    expect(released.commands.indexOf("sleep 5")).toBeLessThan(
+      released.commands.indexOf(
+        "launchctl kickstart -k system/com.jelly.server",
+      ),
+    );
+    expect(
+      released.commands.some((command) => command.startsWith("sudo ")),
+    ).toBe(false);
+  });
+}
+
+test("macOS idle helper fails safely for absent state, invalid settings and denied restart privileges", async () => {
+  for (const options of [
+    { missingDatabase: true },
+    { loaded: false },
+    { port: "65536" },
+    { platform: "FreeBSD" },
+  ]) {
+    const result = await idleRestartFixture(options);
+    expect(result.code).toBe(1);
+    expect(
+      result.commands.some((command) =>
+        /kickstart|^sudo |^curl /.test(command),
+      ),
+    ).toBe(false);
+    if ("missingDatabase" in options) expect(result.databaseExists).toBe(false);
+  }
+  const denied = await idleRestartFixture({ denied: true });
+  expect(denied.code).toBe(1);
+  expect(denied.error).toContain("noninteractive sudo");
+  expect(denied.commands).toContain(
+    "sudo -n launchctl kickstart -k system/com.jelly.server",
+  );
+  expect(
+    denied.commands.some((command) =>
+      /^(launchctl kickstart|curl) /.test(command),
+    ),
+  ).toBe(false);
+});
+
+test("macOS idle helper never claims readiness for a failed HTTP probe or a stopped launchd service", async () => {
+  for (const options of [{ healthy: false }, { active: false }]) {
+    const result = await idleRestartFixture(options);
+    expect(result.code).toBe(1);
+    expect(result.error).toContain("readiness verification failed");
+    expect(result.output).not.toContain("Verified");
+    expect(
+      result.commands.filter(
+        (command) =>
+          command === "launchctl kickstart -k system/com.jelly.server",
+      ),
+    ).toHaveLength(1);
+    expect(
+      result.commands.filter((command) => command === "sleep 2"),
+    ).toHaveLength(30);
+  }
+  const override = await idleRestartFixture({ port: "5432" });
+  expect(override.code).toBe(0);
+  expect(
+    override.commands.some((command) =>
+      command.endsWith("http://127.0.0.1:5432/api/health"),
+    ),
+  ).toBe(true);
 });

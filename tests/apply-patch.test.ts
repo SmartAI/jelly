@@ -14,7 +14,8 @@ afterEach(() => {
     fs.rmSync(dir, { recursive: true, force: true });
 });
 function fixture() {
-  const dir = fs.mkdtempSync(join(tmpdir(), "jelly-patch-"));
+  // Production cwd is canonical; retain the engine's ancestor-symlink refusal.
+  const dir = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "jelly-patch-")));
   dirs.push(dir);
   return {
     dir,

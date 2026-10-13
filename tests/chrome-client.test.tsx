@@ -181,9 +181,43 @@ test("Chrome target UI saves explicit profile/site scope separately and describe
       browserTarget: "chrome",
       chromeProfile: "profile-one",
       chromeOrigins: ["https://example.com"],
+      chromeSiteScope: "approved",
     }),
   );
   expect(screen.getByText(/not a network sandbox/i)).toBeTruthy();
+});
+test("Chrome target UI saves unrestricted internet without an origin list", async () => {
+  const calls = transport();
+  render(
+    <ChromeConnection
+      data={{ config: {}, selectedAgentId: "agent" } as Snapshot}
+      refresh={async () => {}}
+    />,
+  );
+  await screen.findByRole("option", { name: "profile-one · connected" });
+  fireEvent.change(screen.getByLabelText("Browser target"), {
+    target: { value: "chrome" },
+  });
+  fireEvent.change(screen.getByLabelText("Chrome profile"), {
+    target: { value: "profile-one" },
+  });
+  fireEvent.change(screen.getByLabelText("Site access"), {
+    target: { value: "internet" },
+  });
+  expect(
+    screen.queryByLabelText("Approved exact HTTPS origins (one per line)"),
+  ).toBeNull();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Save browser target and site scope" }),
+  );
+  await waitFor(() =>
+    expect(calls.find((c) => c.path === "/api/chrome/settings")?.body).toEqual({
+      browserTarget: "chrome",
+      chromeProfile: "profile-one",
+      chromeOrigins: [],
+      chromeSiteScope: "internet",
+    }),
+  );
 });
 test("Connected Chrome private handoff uses ChatFormCard and actual-Chrome controls, never VNC/password state", async () => {
   const calls = transport(readyTask());

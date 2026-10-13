@@ -239,6 +239,7 @@ test("Harness composes Pi guidance with Jelly policy, append instructions, proje
     await h.dispose(restored);
   }
 });
+// Multiple isolated native child runtimes need a larger overall startup budget on macOS.
 test("real pi-subagents workflow uses the parent provider and effort and supports abort", async () => {
   const h = await Harness.create(dir, undefined, join(dir, "config"));
   await h.auth.saveKey("sk-local-test-not-real");
@@ -383,7 +384,8 @@ test("real pi-subagents workflow uses the parent provider and effort and support
     const pending = tool
       .execute("cancel-test", args, controller.signal)
       .catch((e) => ({ error: String(e) }));
-    const deadline = Date.now() + 5000;
+    // Wait for the real fixture child to start before exercising cancellation.
+    const deadline = Date.now() + 15000;
     while (requests.length < beforeCancel + 1 && Date.now() < deadline)
       await new Promise((r) => setTimeout(r, 10));
     expect(requests.length).toBe(beforeCancel + 1);
@@ -515,13 +517,16 @@ test("real pi-subagents workflow uses the parent provider and effort and support
         timestamp: Date.now(),
       });
       h.wakeSteering(interactive);
-      const until = Date.now() + 5000;
+      const until = Date.now() + 15000;
       while (
         (!parentRequests.some((r) =>
           r.includes("Subagent status checkpoint"),
         ) ||
           !parentRequests.some((r) =>
             r.includes("user-steer-fixture-marker"),
+          ) ||
+          !snapshots.some((snapshot) =>
+            snapshot.children.some((child: any) => child.state === "running"),
           )) &&
         Date.now() < until
       )
@@ -570,7 +575,7 @@ test("real pi-subagents workflow uses the parent provider and effort and support
           new AbortController().signal,
         );
       const supervised = h.settle(interactive);
-      const decisionDeadline = Date.now() + 5000;
+      const decisionDeadline = Date.now() + 15000;
       while (
         (!replyTo ||
           !parentRequests.some((r) =>
@@ -624,4 +629,4 @@ test("real pi-subagents workflow uses the parent provider and effort and support
     await h.dispose(s);
     server.stop(true);
   }
-}, 30000);
+}, 120000);

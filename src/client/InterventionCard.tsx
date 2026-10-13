@@ -12,6 +12,7 @@ import type { Intervention } from "../shared/types";
 import { api, control } from "./api";
 import type { ChromeStatus } from "./ChromeConnection";
 import { ChatFormCard, ChatFormActions } from "./ChatFormCard";
+import { DesktopHandoffCard } from "./DesktopConnection";
 export function InterventionCard({
   item,
   onComputer,
@@ -135,7 +136,7 @@ export function InterventionCard({
     // Only add a fallback row when that event is outside the loaded history.
     if (hasInlineTool) return null;
     const executing = status === "executing" || pending;
-    const label = item.kind === "sudo" ? "Sudo" : "Browser login";
+    const label = item.kind === "sudo" ? "Sudo" : item.kind === "desktop_handoff" ? "Desktop handoff" : "Browser login";
     return (
       <details className="tool-event">
         <summary>
@@ -154,7 +155,7 @@ export function InterventionCard({
                 : `${label} ${status}`}
           </span>
           <code>
-            {item.kind === "sudo" ? "request_sudo" : "request_browser_login"}
+            {item.kind === "sudo" ? "request_sudo" : item.kind === "desktop_handoff" ? "request_desktop_handoff" : "request_browser_login"}
           </code>
           <ChevronDown size={14} />
         </summary>
@@ -168,6 +169,7 @@ export function InterventionCard({
       </details>
     );
   }
+  if (item.kind === "desktop_handoff") return <DesktopHandoffCard item={item} onChange={onChange} />;
   return (
     <ChatFormCard
       label={item.kind === "sudo" ? "Sudo authentication" : "Browser login"}

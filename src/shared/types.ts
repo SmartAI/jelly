@@ -19,7 +19,9 @@ export interface ProjectRecord {
   updatedAt: string;
 }
 export type AgentInput = Pick<AgentRecord, "name" | "instructions" | "color"> &
-  Partial<Pick<AgentRecord, "avatarId" | "projectId">> & { nameEdited?: boolean };
+  Partial<Pick<AgentRecord, "avatarId" | "projectId">> & {
+    nameEdited?: boolean;
+  };
 export interface AgentRecord {
   model: ModelId;
   effort: Effort;
@@ -58,6 +60,7 @@ export interface ConnectionConfig {
   browserTarget?: "managed" | "chrome";
   chromeProfile?: string;
   chromeOrigins?: string[];
+  chromeSiteScope?: "approved" | "internet";
   browserBackend?: BrowserBackend;
   selectedModel: ModelId;
   effort: Effort;
@@ -98,7 +101,7 @@ export interface Intervention {
   id: string;
   agentId: string;
   runId: string;
-  kind: "sudo" | "browser_login";
+  kind: "sudo" | "browser_login" | "desktop_handoff";
   status:
     | "pending"
     | "executing"

@@ -6,6 +6,15 @@ import { expect } from "bun:test";
 import { ChromeBridge } from "../src/server/chrome-bridge";
 const dir = mkdtempSync(join(tmpdir(), "jelly-chrome-headed-"));
 let deniedHits = 0;
+let protectedHits = 0;
+const protectedFixture = Bun.serve({
+  hostname: process.platform === "darwin" ? "::1" : "127.0.0.3",
+  port: 0,
+  fetch() {
+    protectedHits++;
+    return new Response("CONTROL MUST NOT BE REACHED");
+  },
+});
 const denied = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,
@@ -15,7 +24,7 @@ const denied = Bun.serve({
   },
 });
 const childFixture = Bun.serve({
-  hostname: "127.0.0.2",
+  hostname: process.platform === "darwin" ? "localhost" : "127.0.0.2",
   port: 0,
   fetch: () =>
     new Response(
@@ -28,6 +37,13 @@ const fixture = Bun.serve({
   port: 0,
   fetch(req) {
     const path = new URL(req.url).pathname;
+    if (path === "/internet-redirect")
+      return Response.redirect(`${protectedFixture.url.origin}/control`);
+    if (path === "/internet-assets")
+      return new Response(
+        `<h1>Internet assets</h1><iframe src="${childFixture.url.origin}/"></iframe><img src="${protectedFixture.url.origin}/secret.png"><script src="${protectedFixture.url.origin}/secret.js"></script>`,
+        { headers: { "Content-Type": "text/html" } },
+      );
     if (path === "/redirect")
       return Response.redirect(`${denied.url.origin}/forbidden`);
     if (path === "/visibility")
@@ -130,7 +146,7 @@ try {
     display = `:${new TextDecoder().decode(first.value).trim()}`;
     reader.releaseLock();
   }
-  if (!display)
+  if (!display && process.platform !== "darwin")
     throw new Error(
       "Headed Chrome needs Xvfb or DISPLAY; no test was performed.",
     );
@@ -250,6 +266,142 @@ try {
     }
   }
   expect(snapshot.text).toContain("Local fixture");
+  // No origin allowlist in internet mode, including cross-site frames/assets.
+  // Control-host denies apply before navigation and subresource requests.
+  const internetSession = crypto.randomUUID();
+  await call(
+    "begin",
+    {
+      name: "Internet fixture",
+      origins: [],
+      siteScope: "internet",
+      protected: [protectedFixture.url.origin],
+    },
+    internetSession,
+  );
+  const unrestricted = await call(
+    "open",
+    { url: `${fixture.url.origin}/internet-assets` },
+    internetSession,
+  );
+  let internetSnapshot: any;
+  for (let i = 0; i < 40; i++) {
+    try {
+      internetSnapshot = await call(
+        "snapshot",
+        { tab: unrestricted.pageId },
+        internetSession,
+      );
+      break;
+    } catch {
+      await delay();
+    }
+  }
+  expect(internetSnapshot.text).toContain("Internet assets");
+  expect(internetSnapshot.text).toContain("OOPIF child");
+  expect(protectedHits).toBe(0);
+  await expect(
+    call("open", { url: protectedFixture.url.href }, internetSession),
+  ).rejects.toThrow();
+  await call(
+    "open",
+    { url: `${fixture.url.origin}/internet-redirect` },
+    internetSession,
+  );
+  await delay(300);
+  expect(protectedHits).toBe(0);
+  const internetStatus = await popup.evaluate(() =>
+    (globalThis as any).chrome.runtime.sendMessage({ action: "status" }),
+  );
+  expect(
+    internetStatus.sessions.find((s: any) => s.id === internetSession)
+      .siteScope,
+  ).toBe("internet");
+  await call("end", { discard: true }, internetSession);
+  // Private control survives run settlement for explicit and protective pauses.
+  // Human input still works, while agent observation remains revoked.
+  for (const mode of ["server", "popup", "debugger-conflict"]) {
+    const takeover = crypto.randomUUID();
+    const url = `${fixture.url.origin}/private-takeover-${mode}`;
+    await call(
+      "begin",
+      { name: "Private takeover", origins: [fixture.url.origin], protected: [] },
+      takeover,
+    );
+    const humanTab = await call("open", { url }, takeover);
+    await call("focus", { tab: humanTab.pageId }, takeover);
+    const humanPage = context.pages().find((p) => p.url() === url)!;
+    await humanPage.getByRole("heading", { name: "Local fixture" }).waitFor();
+    if (mode === "server") await call("pause", {}, takeover);
+    else if (mode === "popup")
+      await popup.evaluate(() =>
+        (globalThis as any).chrome.runtime.sendMessage({ action: "pause" }),
+      );
+    else {
+      await worker.evaluate(async (url) => {
+        const api = (globalThis as any).chrome;
+        const id = (await api.tabs.query({})).find((t: any) => t.url === url).id;
+        const original = api.debugger.attach.bind(api.debugger);
+        const targets = api.debugger.getTargets.bind(api.debugger);
+        (globalThis as any).restoreTakeoverAttach = () => {
+          api.debugger.attach = original;
+          api.debugger.getTargets = targets;
+        };
+        api.debugger.attach = async () => {
+          throw new Error("Fixture debugger conflict");
+        };
+        // The fixture's inspection pipe attaches separately. Model confirmation
+        // that the rejected Jelly attachment is gone, without detaching that pipe.
+        api.debugger.getTargets = async () =>
+          (await targets()).map((t: any) =>
+            t.tabId === id ? { ...t, attached: false } : t,
+          );
+      }, url);
+      try {
+        await expect(
+          call("screenshot", { tab: humanTab.pageId }, takeover),
+        ).rejects.toThrow();
+      } finally {
+        await worker.evaluate(() => (globalThis as any).restoreTakeoverAttach());
+      }
+    }
+    const paused = await popup.evaluate(() =>
+      (globalThis as any).chrome.runtime.sendMessage({ action: "status" }),
+    );
+    expect(paused.sessions.find((s: any) => s.id === takeover)).toMatchObject({
+      paused: true,
+      failed: false,
+    });
+    await expect(
+      call("snapshot", { tab: humanTab.pageId }, takeover),
+    ).rejects.toThrow();
+    expect(await call("end", {}, takeover)).toMatchObject({
+      retained: [humanTab.pageId],
+    });
+    expect(humanPage.isClosed()).toBe(false);
+    await humanPage.getByRole("button", { name: "Go", exact: true }).click();
+    expect(await humanPage.locator("h1").innerText()).toBe("Clicked fixture");
+    if (mode === "server") {
+      await call(
+        "begin",
+        { name: "Private takeover", origins: [fixture.url.origin], protected: [] },
+        takeover,
+      );
+      await call("resume", {}, takeover);
+      const closed = humanPage.waitForEvent("close");
+      expect(await call("end", {}, takeover)).toMatchObject({ retained: [] });
+      await closed; // Explicit return of control restores temporary-tab cleanup.
+    } else {
+      // Closing the idle session releases control without closing the human's tab.
+      await call("end", { discard: true }, takeover);
+      expect(humanPage.isClosed()).toBe(false);
+      await humanPage.close();
+    }
+  }
+  await call("resume"); // The popup paused the original fixture session too.
+  console.log(
+    "PASS: private pause preserves open tabs and human control after settlement",
+  );
   const screenshot = await call("screenshot", { tab });
   expect(
     Buffer.from(screenshot.image, "base64").subarray(1, 4).toString(),
@@ -1404,6 +1556,7 @@ try {
   await fixture.stop(true);
   await childFixture.stop(true);
   await denied.stop(true);
+  await protectedFixture.stop(true);
   await secondBridge?.close();
   rmSync(dir, { recursive: true, force: true });
 }

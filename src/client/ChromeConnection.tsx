@@ -14,6 +14,7 @@ export interface ChromeStatus {
     active: string | null;
     handoff: string | null;
     origins: string[];
+    siteScope?: "approved" | "internet";
   } | null;
 }
 export function ChromeConnection({
@@ -36,6 +37,9 @@ export function ChromeConnection({
   const [profile, setProfile] = useState(data.config.chromeProfile ?? "");
   const [origins, setOrigins] = useState(
     (data.config.chromeOrigins ?? []).join("\n"),
+  );
+  const [siteScope, setSiteScope] = useState(
+    data.config.chromeSiteScope ?? "approved",
   );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -106,6 +110,7 @@ export function ChromeConnection({
               browserTarget: target,
               chromeProfile: profile,
               chromeOrigins: origins.split(/\s+/).filter(Boolean),
+              chromeSiteScope: siteScope,
             }
           : { agentId: scope.agentId, pageId },
       );
@@ -153,9 +158,9 @@ export function ChromeConnection({
             instance with this page.
           </li>
           <li>
-            Choose the connected profile below, approve exact site origins, and
-            save once for all agents. No profile copying, Chrome restart flags
-            or debugging port.
+            Choose the connected profile below, select approved sites or
+            unrestricted internet, and save once for all agents. No profile
+            copying, Chrome restart flags or debugging port.
           </li>
         </ol>
       </details>
@@ -184,14 +189,37 @@ export function ChromeConnection({
         </select>
       </label>
       <label className="chat-form-field">
-        <span>Approved exact HTTPS origins (one per line)</span>
-        <textarea
-          rows={4}
-          value={origins}
-          onChange={(e) => setOrigins(e.target.value)}
-          placeholder="https://example.com"
-        />
+        <span>Site access</span>
+        <select
+          value={siteScope}
+          onChange={(e) =>
+            setSiteScope(e.target.value as "approved" | "internet")
+          }
+        >
+          <option value="approved">Approved sites only</option>
+          <option value="internet">
+            Unrestricted internet (HTTP and HTTPS)
+          </option>
+        </select>
       </label>
+      {siteScope === "internet" && (
+        <p className="chat-form-hint">
+          Every persistent agent can use public websites with this profile’s
+          signed-in accounts. Jelly, local/private addresses and internal
+          browser pages remain blocked.
+        </p>
+      )}
+      {siteScope === "approved" && (
+        <label className="chat-form-field">
+          <span>Approved exact HTTPS origins (one per line)</span>
+          <textarea
+            rows={4}
+            value={origins}
+            onChange={(e) => setOrigins(e.target.value)}
+            placeholder="https://example.com"
+          />
+        </label>
+      )}
       <p className="chat-form-hint">
         Global scope applies to new sessions for every persistent agent.
         Existing sessions keep their target, profile and approved sites until
@@ -231,7 +259,11 @@ export function ChromeConnection({
               : "Disconnected"}{" "}
             · {status.task.tabs.length} task tabs
           </p>
-          <p>{status.task.origins.join(", ")}</p>
+          <p>
+            {status.task.siteScope === "internet"
+              ? "Unrestricted internet (HTTP and HTTPS)"
+              : status.task.origins.join(", ")}
+          </p>
           {["pause", "resume", "disconnect", "close"].map((op) => (
             <button
               key={op}

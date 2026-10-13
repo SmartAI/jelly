@@ -402,6 +402,8 @@ test("model and effort defaults, validation, mode-only updates and restart persi
   expect(initial.effort).toBe("medium");
   for (const data of [
     { model: "gpt-5.4" },
+    { model: "gpt-6-sol-ultrafast" },
+    { model: "gpt-6.1-sol-ultrafast" },
     { effort: "none" },
     { effort: "invalid" },
     { model: null },
@@ -426,6 +428,30 @@ test("model and effort defaults, validation, mode-only updates and restart persi
     reader.close();
   }
 });
+test.each(["gpt-6-astra-fast", "gpt-6-sol-fast", "gpt-6.1-sol-fast"] as const)(
+  "%s persists as both a new-agent default and a per-agent selection",
+  async (model) => {
+    const f = await fixture();
+    const first = f.app.store.agents()[0]!;
+    const response = await f.request("/api/config", "PUT", { model });
+    expect(response.status).toBe(200);
+    expect((await response.json()).selectedModel).toBe(model);
+    expect(f.app.store.agent(first.id)?.model).toBe("gpt-6-astra");
+    const newer = f.app.service.createAgent({ name: "Fast default", instructions: "", color: "#fff" });
+    expect(newer.model).toBe(model);
+    expect((await f.request("/api/config", "PUT", { agentId: first.id, model })).status).toBe(200);
+    f.app.service.setMode("auto");
+    const { Store } = await import("../src/server/store");
+    const reader = new Store(join(f.dir, "jelly.sqlite"));
+    try {
+      expect(reader.instance().model).toBe(model);
+      expect(reader.agent(first.id)?.model).toBe(model);
+      expect(reader.agent(newer.id)?.model).toBe(model);
+    } finally {
+      reader.close();
+    }
+  },
+);
 test("model switches pin the selected agent, preserve peers, and seed new agents atomically", async () => {
   const f = await fixture();
   const first = f.app.store.agents()[0]!;

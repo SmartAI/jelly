@@ -10,14 +10,16 @@ const result = (value: unknown) => ({
 const define = <T extends TSchema>(tool: ToolDefinition<T>): ToolDefinition =>
   tool as ToolDefinition;
 export function interventionTools(
-  sessions: { get(id: string): BrowserPort },
+  sessions: { target?: "managed" | "chrome"; get(id: string): BrowserPort },
   requests: Interventions,
   agentId: string,
   runId: string,
   cwd: string,
+  beforePrivateBrowser?: () => Promise<void>,
 ): ToolDefinition[] {
   const computer = () => sessions.get(agentId);
-  return [
+  const chrome = sessions.target === "chrome";
+  const tools = [
     define({
       name: "request_sudo",
       label: "Run sudo",
@@ -52,6 +54,10 @@ export function interventionTools(
       execute: async (_id, args, signal) => {
         signal?.throwIfAborted();
         const browser = computer();
+        // No private-entry card is published until desktop admission is closed
+        // and all previously accepted desktop work is known to have drained.
+        await beforePrivateBrowser?.();
+        signal?.throwIfAborted();
         const pending = requests.request(
           "browser_login",
           agentId,
@@ -259,4 +265,29 @@ export function interventionTools(
         result(await computer().action("key", args, signal)),
     }),
   ];
+  const chromeOnly = new Set(["browser_keep_tab", "browser_name_task", "browser_select"]);
+  const managedOnly = new Set(["browser_type", "browser_upload", "browser_diagnostics"]);
+  return tools
+    .filter(tool => chrome ? !managedOnly.has(tool.name) : !chromeOnly.has(tool.name))
+    .map(tool => {
+      if (tool.name === "browser_key")
+        return { ...tool,
+          description: chrome
+            ? "Connected Chrome: requires an exact button/select reference and only Enter, Space, arrows or Escape; no global shortcuts or credential typing."
+            : "Press a key or shortcut in the managed browser.",
+          parameters: chrome
+            ? Type.Object({ key: Type.String({ maxLength: 100 }), ref: Type.String() })
+            : Type.Object({ key: Type.String({ maxLength: 100 }) }),
+        };
+      if (tool.name === "browser_click" && chrome)
+        return { ...tool,
+          description: "Click an exact browser_snapshot reference in Connected Chrome. Coordinate clicks are unavailable.",
+          parameters: Type.Object({ ref: Type.String() }),
+        };
+      if (tool.name === "request_browser_login" && chrome)
+        return { ...tool, description: "Pause the Connected Chrome task for private sign-in in the user's existing Chrome profile. Never ask for credentials. The user returns control through Settings → Browser target → This agent’s pinned Chrome session → Resume, or the Chrome sign-in card. There is no managed browser viewer or Computer panel." };
+      if (tool.name === "browser_keep_tab")
+        return { ...tool, description: tool.description.replace(" Unavailable for managed browsers.", "") };
+      return tool;
+    });
 }

@@ -61,3 +61,33 @@ All reads require a session; all mutations also require CSRF. Agent tools use th
 The operator confirmed an empty registry and no installed app/gateway services for this change. Migration/restore and legacy compatibility were explicitly skipped; no live database or service lifecycle is changed during implementation. Existing unused physical tables in an old empty database are not adopted or queried. Fresh databases contain only Apps metadata, visits and icons. Unrelated schema migrations are preserved.
 
 Wealthboard at `http://box.tailbfab3f.ts.net:3007` is the intended first real acceptance case, **not automatically registered**. After reviewed activation, the owner should register it and observe embedding locally and on a separate Tailscale device. Real phone/Safari/PWA, third-party-cookie/OAuth configurations, remote-device reachability and live activation remain unverified until actually observed.
+
+## Jelly activation helper
+
+`scripts/restart-when-idle.sh` supports Linux/systemd and macOS/launchd. Run it
+**outside Jelly's service**, from a separate systemd user unit on Linux or a
+separate terminal/launchd job on macOS, never inline from an agent run. It polls
+every five seconds for up to 30 minutes, respecting owner-managed restart holds
+in the checkout's `.jelly/restart-holds` and the configured data directory's
+`restart-holds`, and checks running runs through read-only SQLite.
+
+Linux retains the `jelly.service` restart and legacy `jelly-dev.service`
+migration. macOS reads the port and data directory from
+`/Library/LaunchDaemons/com.jelly.server.plist`, requires that it belongs to this
+checkout, and uses `launchctl kickstart -k system/com.jelly.server`. Run
+`sudo /bin/bash scripts/restart-when-idle.sh` from a separate terminal, or grant
+noninteractive sudo for that launchctl command to the helper's user. The helper
+never prompts for a password. Direct launchctl/systemctl restarts and crash
+recovery bypass the helper's idle checks; it does not alter service configuration.
+
+Readiness checks the service state and both loopback and connected private
+Tailscale HTTP, including public `/api/health`, without reading unauthenticated
+private state. Tailscale discovery uses a portable Python subprocess timeout; GNU
+`timeout` is not required. Verification is from this host, not an independent
+remote peer. The Linux default port is 5173; macOS uses the plist's `JELLY_PORT`
+(5173 if unset). `JELLY_RESTART_PORT` (1–65535) and `JELLY_DATA_DIR` can override
+the helper's port and data directory when they match the installed service.
+Neither changes the server's configuration. Disconnected Tailscale, invalid
+settings, failed restart privileges or failed health is not reported as verified.
+Tests use copied helpers, temporary databases/plists and fake service-manager
+commands; they never restart the live service.

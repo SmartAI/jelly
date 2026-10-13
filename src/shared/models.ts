@@ -6,6 +6,7 @@ export const MODEL_OPTIONS = [
   { id: "gpt-6-sol-fast", label: "GPT-6 Sol Fast" },
   { id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
   { id: "gpt-6.1-sol-fast", label: "GPT-6.1 Sol Fast" },
+  { id: "gpt-6.1-sol-ultrafast", label: "GPT-6.1 Sol Ultrafast" },
 ] as const;
 export const EFFORT_OPTIONS = [
   { id: "low", label: "Low" },
@@ -27,13 +28,14 @@ export function upstreamModel(
     case "gpt-6-sol-fast":
       return "gpt-6-sol";
     case "gpt-6.1-sol-fast":
+    case "gpt-6.1-sol-ultrafast":
       return "gpt-6.1-sol";
     default:
       return model;
   }
 }
 export function modelServiceTier(model: ModelId): "priority" | "ultrafast" | undefined {
-  if (model === "gpt-6-astra-ultrafast") return "ultrafast";
+  if (model.endsWith("-ultrafast")) return "ultrafast";
   if (model.endsWith("-fast")) return "priority";
 }
 export const FAST_NOTICE =

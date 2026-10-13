@@ -16,9 +16,10 @@ const MODEL_CHOICES = [
   ["gpt-6-sol-fast", "gpt-6-sol", "priority"],
   ["gpt-6.1-sol-fast", "gpt-6.1-sol", "priority"],
   ["gpt-6-astra-ultrafast", "gpt-6-astra", "ultrafast"],
+  ["gpt-6.1-sol-ultrafast", "gpt-6.1-sol", "ultrafast"],
 ] as const;
 
-test("speed selections map to upstream models and tiers, with Ultrafast only for Astra", () => {
+test("speed selections map to upstream models and tiers", () => {
   expect(MODEL_OPTIONS.map(m => m.id).sort()).toEqual(MODEL_CHOICES.map(([id]) => id).sort());
   for (const [selection, model, tier] of MODEL_CHOICES) {
     expect(upstreamModel(selection)).toBe(model);
@@ -43,6 +44,10 @@ test("speed tiers preserve payload hooks and only affect supported providers and
     model: sol.id, instructions: "preserved",
   });
   for (const provider of ["openai", "openai-codex"]) {
+    const sol61 = { ...sol, id: "gpt-6.1-sol", provider };
+    expect(await options.onPayload!({ model: sol61.id }, sol61)).toEqual({
+      model: sol61.id, instructions: "preserved", service_tier: "ultrafast",
+    });
     for (const model of [astra, sol, { ...sol, id: "gpt-6.1-sol" }]) {
       const options = serviceTierOptions(original, "priority");
       expect(await options.onPayload!({ model: model.id }, { ...model, provider })).toEqual({
@@ -243,7 +248,7 @@ for (const mode of ["api", "chatgpt"] as const)
       await app.service.settled();
       expect(requests.length).toBeGreaterThan(beforeSummary);
       for (const request of requests.slice(beforeSummary)) {
-        expect(request.body.model).toBe("gpt-6-astra");
+        expect(request.body.model).toBe("gpt-6.1-sol");
         expect(request.body.service_tier).toBe("ultrafast");
       }
       await app.service.harness.generateAgentName("Test name", app.service.snapshot().config, new AbortController().signal);

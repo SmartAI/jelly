@@ -55,7 +55,7 @@ Agents can inspect bounded visible browser text and element references, click/fi
 
 `apply_patch` adds Codex-style multi-file add/update/delete/move patches on both OpenAI API and ChatGPT, alongside unchanged Pi `edit`/`write`. It requires exact unique context and rejects symlinks, hardlinked sources and unsupported text. Paths are not sandboxed. Preflight checks the whole patch, but filesystem writes are **not transactional**: failures can leave partial changes, reported in a mutation ledger. Limits are 1 MiB per patch/file, 64 operations and 16 MiB combined working set.
 
-See [tool APIs and limitations](docs/ARCHITECTURE.md#structured-browser-tools). `bun run check` includes structured-browser Chromium tests, patch filesystem tests and local provider-transport tests; `bun run test:desktop` additionally requires the Linux desktop runtime.
+See [tool APIs and limitations](docs/ARCHITECTURE.md#structured-browser-tools). `bun run check:full` includes structured-browser Chromium tests, patch filesystem tests and local provider-transport tests; `bun run test:desktop` additionally requires the Linux desktop runtime.
 
 ## Quick start
 
@@ -153,7 +153,8 @@ Conversations, credentials, browser profiles, and artifacts live in `.jelly/` by
 ## Development
 
 ```sh
-bun run check   # TypeScript, tests, and production build
+bun run check        # Fast TypeScript-only check for everyday commits
+bun run check:full   # TypeScript, all tests, and both builds before deployment
 ```
 
 Tests use temporary data and deterministic fixtures; no paid model calls are required. See [architecture](docs/ARCHITECTURE.md), [design](docs/DESIGN.md), and the [roadmap](ROADMAP.md).

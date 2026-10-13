@@ -31,8 +31,11 @@ export type SudoExecutor = (
 export function validateCommand(command: SudoCommand): SudoCommand {
   if (!isAbsolute(command.executable) || command.executable.includes("\0"))
     throw new Error("Sudo requires an absolute executable path.");
-  const executable = realpathSync(command.executable);
-  if (!statSync(executable).isFile()) throw new Error("Invalid executable.");
+  // Validate the target, but preserve the invocation path: multicall programs
+  // such as shutdown (a systemctl symlink) choose behavior from argv[0].
+  const executable = command.executable;
+  if (!statSync(realpathSync(executable)).isFile())
+    throw new Error("Invalid executable.");
   if (
     !Array.isArray(command.args) ||
     command.args.length > 64 ||

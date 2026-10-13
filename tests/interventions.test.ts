@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createSudoExecutor, validateCommand } from "../src/server/sudo";
@@ -32,6 +32,27 @@ const command = {
   summary: "Show the effective user ID without changing files.",
   reason: "Test exact command",
 };
+test("sudo preserves a symlink invocation path for multicall executables", async () => {
+  const dir = temp();
+  const target = helper(dir, "import sys\nprint(sys.argv[0])\n");
+  const alias = join(dir, "shutdown-fixture");
+  symlinkSync(target, alias);
+  const validated = validateCommand({ ...command, executable: alias, args: [] });
+  expect(validated.executable).toBe(alias);
+  // Fake sudo forwards to a harmless fixture; never invoke real shutdown.
+  const fakeSudo = helper(
+    dir,
+    "import subprocess,sys\nassert sys.argv[1:3]==['-n','--']\nsys.exit(subprocess.call(sys.argv[3:]))\n",
+  );
+  const result = await createSudoExecutor(fakeSudo)(
+    validated, Buffer.alloc(0), new AbortController().signal,
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout.trim()).toBe(alias);
+  symlinkSync(join(dir, "missing"), join(dir, "broken"));
+  expect(() => validateCommand({ ...command, executable: join(dir, "broken") })).toThrow();
+  expect(() => validateCommand({ ...command, executable: dir })).toThrow("Invalid executable");
+});
 test("sudo askpass has a separate secret channel; stdout/stderr are redacted and stdin is EOF", async () => {
   const dir = temp(),
     secret = "test-private-92847",

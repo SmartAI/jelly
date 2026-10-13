@@ -403,7 +403,6 @@ test("model and effort defaults, validation, mode-only updates and restart persi
   for (const data of [
     { model: "gpt-5.4" },
     { model: "gpt-6-sol-ultrafast" },
-    { model: "gpt-6.1-sol-ultrafast" },
     { effort: "none" },
     { effort: "invalid" },
     { model: null },
@@ -428,7 +427,7 @@ test("model and effort defaults, validation, mode-only updates and restart persi
     reader.close();
   }
 });
-test.each(["gpt-6-astra-fast", "gpt-6-sol-fast", "gpt-6.1-sol-fast"] as const)(
+test.each(["gpt-6-astra-fast", "gpt-6-sol-fast", "gpt-6.1-sol-fast", "gpt-6.1-sol-ultrafast"] as const)(
   "%s persists as both a new-agent default and a per-agent selection",
   async (model) => {
     const f = await fixture();

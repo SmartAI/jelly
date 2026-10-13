@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
 import {
   existsSync,
   mkdtempSync,
@@ -17,7 +18,10 @@ import { Store } from "../src/server/store";
 import type { BrowserBackend } from "../src/shared/types";
 
 const runtime = resolve(".jelly/runtime");
+const nativeSupported =
+  process.platform === "linux" && ["x64", "arm64"].includes(process.arch);
 const available =
+  nativeSupported &&
   existsSync("/usr/bin/google-chrome") &&
   (existsSync("/usr/bin/Xvfb") || existsSync(join(runtime, "usr/bin/Xvfb")));
 
@@ -69,11 +73,24 @@ test("unavailable native daemon fails without exposing process diagnostics and c
   const dir = mkdtempSync(join(tmpdir(), "jelly-native-unavailable-"));
   rmSync(dir, { recursive: true, force: true });
   const controller = new AgentBrowser(dir);
+  const spawning = spyOn(childProcess, "spawn");
+  const protectedPorts: number[] = [];
   try {
     await expect(
-      controller.start("ws://127.0.0.1:1/devtools/browser/test", () => {}, 1),
-    ).rejects.toThrow("AgentBrowser could not start");
+      controller.start(
+        "ws://127.0.0.1:1/devtools/browser/test",
+        (port) => protectedPorts.push(port),
+        1,
+      ),
+    ).rejects.toThrow(
+      nativeSupported
+        ? "AgentBrowser could not start"
+        : "AgentBrowser requires Linux x64 or arm64.",
+    );
+    expect(protectedPorts).toHaveLength(0);
+    if (!nativeSupported) expect(spawning).not.toHaveBeenCalled();
   } finally {
+    spawning.mockRestore();
     await controller.close();
   }
 });
@@ -616,6 +633,7 @@ test("native stream fallback to an unreserved port fails before browser attachme
   const port = (occupied.address() as { port: number }).port;
   const protectedPorts: number[] = [];
   const controller = new AgentBrowser(dir);
+  const spawning = spyOn(childProcess, "spawn");
   try {
     await expect(
       controller.start(
@@ -623,10 +641,21 @@ test("native stream fallback to an unreserved port fails before browser attachme
         (actual) => protectedPorts.push(actual),
         port,
       ),
-    ).rejects.toThrow("control port changed");
-    expect(protectedPorts).toHaveLength(1);
-    expect(protectedPorts[0]).not.toBe(port);
+    ).rejects.toThrow(
+      nativeSupported
+        ? "control port changed"
+        : "AgentBrowser requires Linux x64 or arm64.",
+    );
+    if (nativeSupported) {
+      expect(protectedPorts).toHaveLength(1);
+      expect(protectedPorts[0]).not.toBe(port);
+    } else {
+      // No native daemon or fallback listener is admitted on unsupported hosts.
+      expect(spawning).not.toHaveBeenCalled();
+      expect(protectedPorts).toHaveLength(0);
+    }
   } finally {
+    spawning.mockRestore();
     await controller.close();
     await new Promise<void>((resolve) => occupied.close(() => resolve()));
     rmSync(dir, { recursive: true, force: true });

@@ -6,7 +6,10 @@ import {
   CHROME_MAX_FRAME,
 } from "../../src/shared/chrome-protocol";
 import { observation } from "./observation";
-import { chromeDenyRegexes } from "../../src/shared/chrome-policy";
+import {
+  chromeDenyRegexes,
+  chromeInternetDenyRegexes,
+} from "../../src/shared/chrome-policy";
 let port = null,
   instance = null,
   generation = crypto.randomUUID(),
@@ -118,7 +121,9 @@ function owned(s, cap) {
   if (!tab || leases.get(tab.id) !== s.id) unavailable();
   return tab;
 }
-function pause(s, retain = false) {
+function pause(s, retain = true) {
+  // Any pause that hands control to the human preserves their working tabs.
+  // Run settlement opts out explicitly; it is cleanup, not a private handoff.
   if (retain)
     for (const tab of s.tabs.values())
       if (tab.origin === "agent" && tab.mark === "temporary")
@@ -151,7 +156,7 @@ function pause(s, retain = false) {
     });
   return s.pausing;
 }
-function localPause(s, retain = false) {
+function localPause(s, retain = true) {
   // Local revocation is immediate; errors are exposed as failed, never paused.
   void pause(s, retain).catch(() => {});
 }
@@ -254,8 +259,14 @@ async function connect() {
     generation,
   });
 }
-async function protect(tabId, origins) {
-  const regexes = chromeDenyRegexes(origins);
+async function protect(tabId, s) {
+  const regexes =
+    s.siteScope === "internet"
+      ? chromeInternetDenyRegexes(
+          s.protected,
+          globalThis.JELLY_FIXTURE === true,
+        )
+      : chromeDenyRegexes(s.origins);
   if (regexes.length > 500) unavailable();
   const ids = regexes.map(() => ruleId++);
   await chrome.declarativeNetRequest.updateSessionRules({
@@ -266,7 +277,7 @@ async function protect(tabId, origins) {
       condition: {
         tabIds: [tabId],
         regexFilter,
-        isUrlFilterCaseSensitive: true,
+        isUrlFilterCaseSensitive: s.siteScope !== "internet",
         resourceTypes: [
           "main_frame",
           "sub_frame",
@@ -309,7 +320,7 @@ async function create(s, run, url) {
   try {
     current(s, run);
     if (debuggerCleanup.has(tab.id)) unavailable();
-    tab.rules = await protect(tab.id, s.origins);
+    tab.rules = await protect(tab.id, s);
     current(s, run);
     if (s.tabs.size >= 12) unavailable();
     leases.set(tab.id, s.id);
@@ -338,12 +349,16 @@ async function create(s, run, url) {
   }
 }
 function checkURL(s, url) {
+  const origin = chromeOrigin(
+    url,
+    s.protected,
+    globalThis.JELLY_FIXTURE === true,
+    s.siteScope,
+  );
   if (
     typeof url !== "string" ||
     url.length > 4096 ||
-    !s.origins.includes(
-      chromeOrigin(url, s.protected, globalThis.JELLY_FIXTURE === true),
-    )
+    (s.siteScope !== "internet" && !s.origins.includes(origin))
   )
     unavailable();
 }
@@ -472,7 +487,9 @@ async function dispatch(r) {
         !retained.idle ||
         !retained.paused ||
         retained.pauseFailed ||
-        JSON.stringify(retained.origins) !== JSON.stringify(p.origins)
+        JSON.stringify(retained.origins) !== JSON.stringify(p.origins) ||
+        retained.siteScope !== (p.siteScope ?? "approved") ||
+        JSON.stringify(retained.protected) !== JSON.stringify(p.protected)
       )
         unavailable();
       retained.run = r.run;
@@ -483,7 +500,7 @@ async function dispatch(r) {
     if (
       sessions.size >= 8 ||
       !Array.isArray(p.origins) ||
-      !p.origins.length ||
+      (p.siteScope !== "internet" && !p.origins.length) ||
       p.origins.length > 20 ||
       !Array.isArray(p.protected) ||
       typeof p.name !== "string"
@@ -509,6 +526,7 @@ async function dispatch(r) {
       tabs: new Map(),
       groups: new Map(),
       origins,
+      siteScope: p.siteScope ?? "approved",
       protected: p.protected,
       agentName: p.name.slice(0, 55),
       name: `🔎 Jelly · ${p.name.slice(0, 55)} · Browse`,
@@ -557,7 +575,7 @@ async function dispatch(r) {
     return { ok: true };
   }
   if (r.method === "end") {
-    await pause(s);
+    await pause(s, false);
     s.idle = true;
     for (const tab of [...s.tabs.values()]) {
       if (
@@ -864,7 +882,7 @@ async function adopt(s, run, id, origin) {
   };
   s.tabs.set(tab.cap, tab); // Count reserved adoptions before asynchronous policy work.
   try {
-    tab.rules = await protect(id, s.origins);
+    tab.rules = await protect(id, s);
     current(s, run);
     let info = await chrome.tabs.get(id);
     if (origin === "agent")
@@ -972,6 +990,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       sessions: [...sessions.values()].map((s) => ({
         id: s.id,
         name: s.name,
+        siteScope: s.siteScope,
         paused: s.paused && !s.pausing && !s.pauseFailed,
         pausing: !!s.pausing,
         failed: !!s.pauseFailed,

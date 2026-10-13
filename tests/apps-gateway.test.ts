@@ -1,3 +1,4 @@
+import { fixtureBrowserPath } from "./fixtures/browser";
 import { afterEach, expect, test } from "bun:test";
 import { createServer, type Server } from "node:http";
 import { createServer as netServer, connect } from "node:net";
@@ -431,7 +432,7 @@ test("invalid gateway configurations fail closed (no wildcard or raw runtime lis
 test("real browser cannot bypass the Unix runtime gateway to steal control cookies or forge another app's session", async () => {
   const f = await fixture();
   const browser = await chromium.launch({
-    executablePath: process.env.CHROME_BIN ?? "/usr/bin/google-chrome",
+    executablePath: fixtureBrowserPath(process.env.CHROME_BIN),
     headless: true,
     args: [
       "--no-sandbox",
@@ -632,7 +633,7 @@ test("redirect/error cookies and prefix/attribute ambiguities fail closed", asyn
 test("browser path/domain shadows cannot alter accepted app cookies; ambiguous namespaces rejected and logout preserved", async () => {
   const f = await fixture();
   const browser = await chromium.launch({
-    executablePath: process.env.CHROME_BIN ?? "/usr/bin/google-chrome",
+    executablePath: fixtureBrowserPath(process.env.CHROME_BIN),
     headless: true,
     args: [
       "--no-sandbox",
@@ -792,7 +793,7 @@ test("real browser direct OAuth GET round-trip retains app-bound HttpOnly state;
   );
   callbackOrigin = f.url;
   const browser = await chromium.launch({
-    executablePath: process.env.CHROME_BIN ?? "/usr/bin/google-chrome",
+    executablePath: fixtureBrowserPath(process.env.CHROME_BIN),
     headless: true,
     args: [
       "--no-sandbox",

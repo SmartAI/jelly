@@ -4,7 +4,7 @@ import { Settings2 } from "lucide-react";
 import {
   MODEL_OPTIONS,
   EFFORT_OPTIONS,
-  ULTRAFAST_NOTICE,
+  modelSpeedNotice,
   type ModelId,
   type Effort,
 } from "../shared/models";
@@ -86,6 +86,7 @@ export function ComposerSettings({
       onBusy(false);
     }
   }
+  const speedNotice = modelSpeedNotice(model);
   const fields = (
     <div
       className={`composer-settings-fields ${mobile ? "" : "composer-settings-menu floating-popover"}`}
@@ -150,8 +151,8 @@ export function ComposerSettings({
           ))}
         </select>
       </label>
-      {model === "gpt-6-astra-ultrafast" && (
-        <p className="subtle">{ULTRAFAST_NOTICE}</p>
+      {speedNotice && (
+        <p className="subtle">{speedNotice}</p>
       )}
       <p className="subtle">
         {readOnly

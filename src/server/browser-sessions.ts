@@ -25,26 +25,28 @@ export class BrowserSessions {
     run: string,
     selection: ChromeSelection,
     name: string,
-  ): { get(id: string): BrowserPort } {
+  ): { target: "managed" | "chrome"; get(id: string): BrowserPort } {
     const captured = structuredClone(selection);
+    let pin = this.pins.get(agent);
+    if (!pin) {
+      pin =
+        this.managed.state(agent).status !== "stopped"
+          ? { ...captured, browserTarget: "managed" }
+          : captured;
+      this.pins.set(agent, pin);
+    }
+    const selected = pin;
     let port: BrowserPort | undefined;
     return {
+      target: selected.browserTarget,
       get: (id) => {
         if (id !== agent)
           throw new Error(
             "Child/foreign Chrome browser access is unavailable.",
           );
         if (port) return port;
-        let pin = this.pins.get(agent);
-        if (!pin) {
-          pin =
-            this.managed.state(agent).status !== "stopped"
-              ? { ...captured, browserTarget: "managed" }
-              : captured;
-          this.pins.set(agent, pin);
-        }
-        if (pin.browserTarget === "chrome")
-          return (port = this.chrome.allocate(agent, run, pin, name));
+        if (selected.browserTarget === "chrome")
+          return (port = this.chrome.allocate(agent, run, selected, name));
         const computer = this.managed.get(agent);
         return (port = {
           target: "managed",

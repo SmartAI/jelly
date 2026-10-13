@@ -176,6 +176,28 @@ interface DirectoryPage {
   entries: { name: string; path: string; available: boolean }[];
   cursor: string | null;
 }
+/** Bound the whole request, including control-session bootstrap and body reads. */
+async function loadDirectoryPage(url: string, signal?: AbortSignal) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      api<DirectoryPage>(url, { signal: controller.signal }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error("Loading folders timed out. Check the Jelly server connection and try again."));
+          controller.abort();
+        }, 10_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
+}
 export function DirectoryPicker({
   initial,
   createInitially = false,
@@ -227,9 +249,9 @@ export function DirectoryPicker({
     setBusy(true);
     setError("");
     setData(null);
-    api<DirectoryPage>(
+    loadDirectoryPage(
       `/directories?hidden=${hidden}${path ? `&path=${encodeURIComponent(path)}` : ""}`,
-      { signal: controller.signal },
+      controller.signal,
     )
       .then((d) => {
         if (token === generation.current && !controller.signal.aborted)
@@ -248,7 +270,7 @@ export function DirectoryPicker({
     const token = generation.current;
     setBusy(true);
     try {
-      const next = await api<DirectoryPage>(
+      const next = await loadDirectoryPage(
         `/directories?path=${encodeURIComponent(data.path)}&hidden=${hidden}&cursor=${encodeURIComponent(data.cursor)}`,
       );
       if (token === generation.current)

@@ -18,7 +18,13 @@ const manifest = JSON.parse(
   await readFile("extensions/chrome/manifest.json", "utf8"),
 );
 if (process.env.JELLY_CHROME_FIXTURE === "1")
-  manifest.host_permissions.push("http://127.0.0.1/*", "http://127.0.0.2/*");
+  manifest.host_permissions = [
+    ...new Set([
+      ...manifest.host_permissions,
+      "http://127.0.0.1/*",
+      "http://127.0.0.2/*",
+    ]),
+  ];
 await writeFile(`${outdir}/manifest.json`, JSON.stringify(manifest, null, 2));
 await copyFile("extensions/chrome/popup.html", `${outdir}/popup.html`);
 console.log(`Unpacked experimental extension: ${outdir}`);

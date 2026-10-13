@@ -371,6 +371,7 @@ function AgentDetails({
   onClose,
   onUpload,
   onComputer,
+  managedBrowser,
   onMove,
   onArchive,
   onSaved,
@@ -386,6 +387,7 @@ function AgentDetails({
   onClose: () => void;
   onUpload: () => void;
   onComputer: () => void;
+  managedBrowser: boolean;
   onMove: () => void;
   onArchive: () => void;
   onSaved: () => void;
@@ -452,12 +454,12 @@ function AgentDetails({
               disabled={!connected || !!agent.archivedAt}
               onClick={onUpload}
             />
-            <SettingsRow
+            {managedBrowser && <SettingsRow
               label="Computer"
               icon={<Monitor size={19} />}
               disabled={!connected}
               onClick={onComputer}
-            />
+            />}
             <SettingsRow
               label="Fresh Session"
               value={canCompact ? "Compact context · keep chat history" : "Connect a model to compact"}
@@ -1608,7 +1610,7 @@ function AgentsWorkspace({ active, destinationReady, explicitAgentId, explicitNa
             <span className="empty-header-title">Your agents</span>
           ) : null}
           <div className="conversation-actions">
-            <button
+            {data?.config.browserTarget !== "chrome" && <button
               className="icon computer-button"
               aria-label="Computer"
               title="Computer"
@@ -1616,7 +1618,7 @@ function AgentsWorkspace({ active, destinationReady, explicitAgentId, explicitNa
               disabled={!connected}
             >
               <Monitor size={20} />
-            </button>
+            </button>}
             {agent && (
               <button
                 className="icon agent-options"
@@ -1771,7 +1773,7 @@ function AgentsWorkspace({ active, destinationReady, explicitAgentId, explicitNa
                     event.data.name ===
                       (item.kind === "sudo"
                         ? "request_sudo"
-                        : "request_browser_login"),
+                        : item.kind === "desktop_handoff" ? "request_desktop_handoff" : "request_browser_login"),
                 )}
                 item={
                   data?.interventions.find(
@@ -2000,7 +2002,7 @@ function AgentsWorkspace({ active, destinationReady, explicitAgentId, explicitNa
           }}
         />
       )}
-      {computerOpen && agent?.id === computerOpen && (
+      {data?.config.browserTarget !== "chrome" && computerOpen && agent?.id === computerOpen && (
         <ComputerPanel
           key={computerOpen}
           agentId={computerOpen}
@@ -2054,6 +2056,7 @@ function AgentsWorkspace({ active, destinationReady, explicitAgentId, explicitNa
             setUploadTarget(agent);
             setModal(null);
           }}
+          managedBrowser={data?.config.browserTarget !== "chrome"}
           onComputer={() => {
             setModal(null);
             setComputerOpen(agent?.id ?? null);

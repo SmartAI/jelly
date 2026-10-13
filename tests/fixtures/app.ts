@@ -2,6 +2,7 @@
 import { startApp as startProductionApp, type AppOptions } from "../../src/server/app";
 import { Harness } from "../../src/server/harness";
 import { MODEL_OPTIONS } from "../../src/shared/models";
+import { join } from "node:path";
 import { fixtureModel, fixtureStream } from "./model";
 
 export interface FixtureOptions {
@@ -18,7 +19,17 @@ export function useTestModel(harness: Harness, options: FixtureOptions = {}) {
   });
 }
 export async function startApp(options: AppOptions & FixtureOptions) {
-  const app = await startProductionApp(options);
+  const app = await startProductionApp({
+    ...options,
+    appsOptions: {
+      socketBaseDir: join(options.dataDir, "s"),
+      ...options.appsOptions,
+    },
+    desktopOptions: {
+      leaseRoot: join(options.dataDir, "desktop-fixture-leases"),
+      ...options.desktopOptions,
+    },
+  });
   useTestModel(app.service.harness, options);
   app.service.setMode("api");
   return app;

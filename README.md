@@ -64,14 +64,18 @@ bun run dev
 
 Open **http://127.0.0.1:5173**. **A ChatGPT subscription or OpenAI API key is required to run agents.** Connect your account or add a key in Settings before sending a message. Automatic mode prefers ChatGPT, then an API key; there is no no-key demo mode. Model availability depends on your account.
 
-Select **GPT-6 Astra Ultrafast** in Settings → Model or the composer's model menu
+Select a **Fast** variant of any model in Settings → Model or the composer's model
+menu to request priority processing with `service_tier: "priority"`. Availability
+depends on your account; higher API pricing applies.
+
+Select **GPT-6 Astra Ultrafast** in the same menus
 for eligible ChatGPT subscriptions (Pro 500 or Enterprise) or OpenAI API access.
 This requests Astra with `service_tier: "ultrafast"`; standard Astra remains the
 default. [Ultrafast has higher API pricing and separate limits](https://developers.openai.com/api/docs/guides/ultrafast-mode).
 Account-access errors are surfaced rather than silently falling back to standard.
-The selection covers chat turns, tool continuations, naming, and compaction;
-Pi subagents still use their own service-tier settings (they inherit Astra and effort,
-not Jelly's Ultrafast selection).
+Both speed selections cover chat turns, tool continuations, naming, and compaction;
+Pi subagents still use their own service-tier settings (they inherit the upstream
+model and effort, not Jelly's Fast or Ultrafast selection).
 
 Optional environment settings are documented in [`.env.example`](.env.example). Put local values in `.env.local`, which is ignored by Git. Set `FIRECRAWL_API_KEY` to enable web search and fetching.
 
@@ -84,9 +88,33 @@ bun start
 
 Open **http://127.0.0.1:3100**. Stop development first; both modes use API port 3100 by default. Production has no hot reload—restart after code changes when agents are idle. Development backend reloads interrupt active runs; set `JELLY_WATCH_API=0` to disable them.
 
+For an installed service, `scripts/restart-when-idle.sh` waits up to 30 minutes for
+zero running agents and no restart holds, then restarts and checks loopback and
+private Tailscale HTTP. On macOS it reads the port and data directory from
+`/Library/LaunchDaemons/com.jelly.server.plist` and restarts
+`system/com.jelly.server`. Run it from a separate terminal outside Jelly:
+
+```sh
+sudo /bin/bash scripts/restart-when-idle.sh
+```
+
+On Linux, schedule the helper in a separate systemd user unit; it restarts
+`jelly.service`. See the [service restart details](docs/APPS.md#jelly-activation-helper).
+Direct service-manager restarts bypass this helper's idle checks.
+
 Development serves only frontend source and assets; instance data, server source, and other repository files are not downloadable through Vite. Keep credentials and private files out of `public/`, `src/client/`, `src/shared/`, and `node_modules/`.
 
 ChatGPT sign-in uses a one-time device code. Open the approval link shown in Settings, enter the code, and Jelly connects automatically. This works over Tailscale without a localhost redirect. If needed, enable device-code login in your ChatGPT security settings or ask your workspace admin.
+
+### Native Mac desktop (Peekaboo)
+
+Settings → **Tools → Native Mac desktop** configures an external signed Peekaboo
+CLI/app and an exact Bridge socket, separately from browser tools. Desktop control
+starts off and requires exact application grants. The official unmodified 4.9.0
+releases support scoped AX observation, consented exact-window screenshots and
+native snapshot-bound background input according to available host permissions
+and capabilities. No Peekaboo rebuild is required. See
+[setup, privacy and recovery](docs/PEEKABOO.md).
 
 ### Optional browser desktop
 

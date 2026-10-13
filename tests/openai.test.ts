@@ -4,21 +4,68 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startApp } from "../src/server/app";
-import { ultrafastOptions } from "../src/server/ultrafast";
+import { serviceTierOptions } from "../src/server/service-tier";
+import { MODEL_OPTIONS, modelServiceTier, upstreamModel } from "../src/shared/models";
 import { getModel } from "@earendil-works/pi-ai/compat";
 
-test("Ultrafast preserves payload hooks and does not affect other models", async () => {
+const MODEL_CHOICES = [
+  ["gpt-6-astra", "gpt-6-astra", undefined],
+  ["gpt-6-sol", "gpt-6-sol", undefined],
+  ["gpt-6.1-sol", "gpt-6.1-sol", undefined],
+  ["gpt-6-astra-fast", "gpt-6-astra", "priority"],
+  ["gpt-6-sol-fast", "gpt-6-sol", "priority"],
+  ["gpt-6.1-sol-fast", "gpt-6.1-sol", "priority"],
+  ["gpt-6-astra-ultrafast", "gpt-6-astra", "ultrafast"],
+] as const;
+
+test("speed selections map to upstream models and tiers, with Ultrafast only for Astra", () => {
+  expect(MODEL_OPTIONS.map(m => m.id).sort()).toEqual(MODEL_CHOICES.map(([id]) => id).sort());
+  for (const [selection, model, tier] of MODEL_CHOICES) {
+    expect(upstreamModel(selection)).toBe(model);
+    expect(modelServiceTier(selection)).toBe(tier);
+  }
+});
+
+test("speed tiers preserve payload hooks and only affect supported providers and models", async () => {
   const astra = getModel("openai", "gpt-6-astra")!;
   const sol = getModel("openai", "gpt-6-sol")!;
-  const options = ultrafastOptions({
+  const original = {
+    maxTokens: 123,
     onPayload: async (payload: unknown) => ({ ...(payload as object), instructions: "preserved" }),
-  });
+  };
+  expect(serviceTierOptions(original, undefined)).toBe(original);
+  const options = serviceTierOptions(original, "ultrafast");
+  expect(options.maxTokens).toBe(123);
   expect(await options.onPayload!({ model: astra.id }, astra)).toEqual({
     model: astra.id, instructions: "preserved", service_tier: "ultrafast",
   });
   expect(await options.onPayload!({ model: sol.id }, sol)).toEqual({
     model: sol.id, instructions: "preserved",
   });
+  for (const provider of ["openai", "openai-codex"]) {
+    for (const model of [astra, sol, { ...sol, id: "gpt-6.1-sol" }]) {
+      const options = serviceTierOptions(original, "priority");
+      expect(await options.onPayload!({ model: model.id }, { ...model, provider })).toEqual({
+        model: model.id, instructions: "preserved", service_tier: "priority",
+      });
+    }
+    expect(await options.onPayload!({ model: astra.id }, { ...astra, provider })).toEqual({
+      model: astra.id, instructions: "preserved", service_tier: "ultrafast",
+    });
+  }
+  for (const tier of ["priority", "ultrafast"] as const) {
+    const options = serviceTierOptions(original, tier);
+    expect(await options.onPayload!({ model: astra.id }, { ...astra, provider: "fixture" })).toEqual({
+      model: astra.id, instructions: "preserved",
+    });
+    // Hooks may mutate in place instead of returning a replacement payload.
+    const payload = { model: astra.id };
+    expect(await serviceTierOptions({
+      onPayload: async (body) => { (body as any).instructions = "mutated"; },
+    }, tier).onPayload!(payload, astra)).toEqual({
+      model: astra.id, instructions: "mutated", service_tier: tier,
+    });
+  }
 });
 for (const mode of ["api", "chatgpt"] as const)
   test(`the ${mode} adapter sends GPT-6 model and effort choices, tools and history to Responses`, async () => {
@@ -28,7 +75,7 @@ for (const mode of ["api", "chatgpt"] as const)
         ? "jelly-local-test-key"
         : `test.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "test-account" } })).toString("base64url")}.test`;
     const requests: { path: string; auth: string | null; body: any }[] = [];
-    let denyUltrafast = false;
+    let deniedTier: "priority" | "ultrafast" | undefined;
     const fake = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -47,8 +94,8 @@ for (const mode of ["api", "chatgpt"] as const)
                 )
               : await req.json(),
         });
-        if (denyUltrafast && requests.at(-1)?.body.service_tier === "ultrafast")
-          return Response.json({ error: { message: "Ultrafast is not enabled for this account", type: "invalid_request_error" } }, { status: 403 });
+        if (deniedTier && requests.at(-1)?.body.service_tier === deniedTier)
+          return Response.json({ error: { message: `${deniedTier === "ultrafast" ? "Ultrafast" : "Fast"} is not enabled for this account`, type: "invalid_request_error" } }, { status: 403 });
         const item = {
           type: "message",
           id: "msg_test",
@@ -164,7 +211,7 @@ for (const mode of ["api", "chatgpt"] as const)
       expect(JSON.stringify(requests[1]?.body.input)).toContain(
         "A response from the local API fixture.",
       );
-      for (const model of ["gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra-ultrafast"] as const)
+      for (const [model, upstream, tier] of MODEL_CHOICES)
         for (const effort of [
           "low",
           "medium",
@@ -175,19 +222,22 @@ for (const mode of ["api", "chatgpt"] as const)
           app.service.setConfig({ agentId: id, model, effort });
           app.service.start(id, `${model}-${effort}`, "Verify settings");
           await app.service.settled();
-          expect(requests.at(-1)?.body.model).toBe(model === "gpt-6-astra-ultrafast" ? "gpt-6-astra" : model);
-          expect(requests.at(-1)?.body.service_tier).toBe(model === "gpt-6-astra-ultrafast" ? "ultrafast" : undefined);
+          expect(requests.at(-1)?.body.model).toBe(upstream);
+          expect(requests.at(-1)?.body.service_tier).toBe(tier);
           expect(requests.at(-1)?.body.reasoning.effort).toBe(effort);
           expect(app.store.runs(id).at(-1)?.status).toBe("completed");
           expect(requests.at(-1)?.body.temperature).toBeUndefined();
         }
-      await app.service.harness.generateAgentName(
-        "Test name",
-        app.service.harness.config(mode, { model: "gpt-6.1-sol", effort: "medium" }),
-        new AbortController().signal,
-      );
-      expect(requests.at(-1)?.body.model).toBe("gpt-6.1-sol");
-      expect(requests.at(-1)?.body.reasoning.effort).toBe("low");
+      for (const [model, upstream, tier] of MODEL_CHOICES) {
+        await app.service.harness.generateAgentName(
+          "Test name",
+          app.service.harness.config(mode, { model, effort: "medium" }),
+          new AbortController().signal,
+        );
+        expect(requests.at(-1)?.body.model).toBe(upstream);
+        expect(requests.at(-1)?.body.service_tier).toBe(tier);
+        expect(requests.at(-1)?.body.reasoning.effort).toBe("low");
+      }
       const beforeSummary = requests.length;
       app.service.freshSession(id, "ultrafast-summary");
       await app.service.settled();
@@ -198,13 +248,35 @@ for (const mode of ["api", "chatgpt"] as const)
       }
       await app.service.harness.generateAgentName("Test name", app.service.snapshot().config, new AbortController().signal);
       expect(requests.at(-1)?.body.service_tier).toBe("ultrafast");
-      denyUltrafast = true;
+      deniedTier = "ultrafast";
       const beforeDenied = requests.length;
       app.service.start(id, "ultrafast-denied", "No fallback please");
       await app.service.settled();
       expect(requests.length).toBe(beforeDenied + 1);
       expect(app.store.runs(id).at(-1)?.status).toBe("failed");
       expect(app.store.runs(id).at(-1)?.error).toContain("Ultrafast is not enabled");
+      deniedTier = undefined;
+      for (const [model, upstream, tier] of MODEL_CHOICES) {
+        if (tier !== "priority") continue;
+        app.service.setConfig({ agentId: id, model });
+        app.service.start(id, `${model}-before-summary`, "Fast summary context");
+        await app.service.settled();
+        const beforeFastSummary = requests.length;
+        app.service.freshSession(id, `${model}-summary`);
+        await app.service.settled();
+        expect(requests.length).toBeGreaterThan(beforeFastSummary);
+        for (const request of requests.slice(beforeFastSummary)) {
+          expect(request.body.model).toBe(upstream);
+          expect(request.body.service_tier).toBe("priority");
+        }
+      }
+      deniedTier = "priority";
+      const beforeFastDenied = requests.length;
+      app.service.start(id, "fast-denied", "No fallback please");
+      await app.service.settled();
+      expect(requests.length).toBe(beforeFastDenied + 1);
+      expect(app.store.runs(id).at(-1)?.status).toBe("failed");
+      expect(app.store.runs(id).at(-1)?.error).toContain("Fast is not enabled");
       app.service.setConfig({ agentId: id, model: "gpt-6-astra" });
       app.service.start(id, "standard-again", "Back to standard");
       await app.service.settled();
@@ -244,7 +316,7 @@ for (const mode of ["api", "chatgpt"] as const)
       fake.stop(true);
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 60000);
 
 test("ChatGPT uses cached WebSockets across runs, isolates agents, and reconnects safely", async () => {
   const frames: { connection: number; body: any }[] = [];
@@ -594,44 +666,50 @@ test("ChatGPT uses cached WebSockets across runs, isolates agents, and reconnect
       "New instructions for this agent.",
     );
     expect(posts).toBe(1); // Cancellation did not trigger a retry.
-    app.service.setConfig({ agentId: agent.id, model: "gpt-6-astra-ultrafast" });
-    const beforeUltrafast = frames.length;
-    recoverOverHttp = true;
-    behavior = "tool-then-fail";
-    const callsBefore = app.store
-      .events(0, agent.id)
-      .filter((e) => e.type === "tool_started").length;
-    await run("Use a tool then recover a dropped connection");
-    const recovered = app.store.runs(agent.id).at(-1)!;
-    expect(posts).toBe(2);
-    expect(frames.length).toBeGreaterThan(beforeUltrafast);
-    for (const frame of frames.slice(beforeUltrafast)) {
-      expect(frame.body.model).toBe("gpt-6-astra");
-      expect(frame.body.service_tier).toBe("ultrafast");
+    for (const [model, upstream, tier] of MODEL_CHOICES) {
+      if (!tier) continue;
+      app.service.setConfig({ agentId: agent.id, model });
+      const beforeTier = frames.length;
+      const postsBefore = posts;
+      recoverOverHttp = true;
+      behavior = "tool-then-fail";
+      const callsBefore = app.store
+        .events(0, agent.id)
+        .filter((e) => e.type === "tool_started").length;
+      await run("Use a tool then recover a dropped connection");
+      const recovered = app.store.runs(agent.id).at(-1)!;
+      expect(posts).toBe(postsBefore + 1);
+      expect(frames.length).toBeGreaterThan(beforeTier);
+      for (const frame of frames.slice(beforeTier)) {
+        expect(frame.body.model).toBe(upstream);
+        expect(frame.body.service_tier).toBe(tier);
+      }
+      expect(httpInputs.at(-1).model).toBe(upstream);
+      expect(httpInputs.at(-1).service_tier).toBe(tier);
+      expect(httpInputs.at(-1).previous_response_id).toBeUndefined();
+      expect(httpInputs.at(-1).store).toBe(false);
+      expect(
+        httpInputs
+          .at(-1)
+          .input.some((item: any) => item.type === "function_call_output"),
+      ).toBe(true);
+      expect(JSON.stringify(httpInputs.at(-1))).not.toContain("fc_discarded");
+      const events = app.store.events(0, agent.id);
+      expect(events.filter((e) => e.type === "tool_started").length).toBe(
+        callsBefore + 1,
+      );
+      expect(
+        events
+          .filter(
+            (e) =>
+              e.runId === recovered.id &&
+              e.type === "message" &&
+              e.data.role === "assistant",
+          )
+          .map((e) => e.data.text),
+      ).toEqual(["Recovered over HTTP."]);
     }
-    expect(httpInputs.at(-1).service_tier).toBe("ultrafast");
-    expect(httpInputs.at(-1).previous_response_id).toBeUndefined();
-    expect(httpInputs.at(-1).store).toBe(false);
-    expect(
-      httpInputs
-        .at(-1)
-        .input.some((item: any) => item.type === "function_call_output"),
-    ).toBe(true);
-    expect(JSON.stringify(httpInputs.at(-1))).not.toContain("fc_discarded");
-    const events = app.store.events(0, agent.id);
-    expect(events.filter((e) => e.type === "tool_started").length).toBe(
-      callsBefore + 1,
-    );
-    expect(
-      events
-        .filter(
-          (e) =>
-            e.runId === recovered.id &&
-            e.type === "message" &&
-            e.data.role === "assistant",
-        )
-        .map((e) => e.data.text),
-    ).toEqual(["Recovered over HTTP."]);
+    const postsBeforeApiError = posts;
     behavior = "api-error";
     app.service.start(
       agent.id,
@@ -640,7 +718,7 @@ test("ChatGPT uses cached WebSockets across runs, isolates agents, and reconnect
     );
     await app.service.settled();
     expect(app.store.runs(agent.id).at(-1)?.status).toBe("failed");
-    expect(posts).toBe(2);
+    expect(posts).toBe(postsBeforeApiError);
     expect(frames.every((frame) => frame.body.store === false)).toBe(true);
   } finally {
     await app.close();
@@ -648,4 +726,4 @@ test("ChatGPT uses cached WebSockets across runs, isolates agents, and reconnect
     fake.stop(true);
     rmSync(dir, { recursive: true, force: true });
   }
-}, 20000);
+}, 30000);

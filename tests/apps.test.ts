@@ -7,6 +7,7 @@ import {
   readFileSync,
   symlinkSync,
   existsSync,
+  chmodSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -654,6 +655,7 @@ describe("Managed Apps deployment", () => {
     ]);
     const publicSecret = join(f.dir, "public.env");
     writeFileSync(publicSecret, "TOKEN=private", { mode: 0o644 });
+    chmodSync(publicSecret, 0o644); // The caller's umask must not make this refusal fixture private.
     expect(() =>
       validateManifest({ ...f.manifest, environmentFiles: [publicSecret] }),
     ).toThrow("private");

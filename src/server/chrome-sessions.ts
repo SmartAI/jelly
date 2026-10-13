@@ -12,6 +12,7 @@ interface Task {
   profile: string;
   generation: string;
   origins: string[];
+  siteScope: "approved" | "internet";
   run: string | null;
   authorityRun: string;
   begun: boolean;
@@ -106,7 +107,9 @@ export class ChromeSessions {
       typeof selection.chromeProfile !== "string" ||
       selection.chromeProfile.length > 100 ||
       !Array.isArray(selection.chromeOrigins) ||
-      selection.chromeOrigins.length > 20
+      selection.chromeOrigins.length > 20 ||
+      (selection.chromeSiteScope !== undefined &&
+        !["approved", "internet"].includes(selection.chromeSiteScope))
     )
       throw new HttpError(400, "Invalid browser target/profile/site scope.");
     try {
@@ -120,11 +123,13 @@ export class ChromeSessions {
     }
     if (
       selection.browserTarget === "chrome" &&
-      (!selection.chromeProfile || !selection.chromeOrigins.length)
+      (!selection.chromeProfile ||
+        (selection.chromeSiteScope !== "internet" &&
+          !selection.chromeOrigins.length))
     )
       throw new HttpError(
         400,
-        "Choose a connected Chrome profile and approve at least one site origin.",
+        "Choose a connected Chrome profile and approve site origins or select unrestricted internet.",
       );
   }
   allocate(
@@ -151,6 +156,7 @@ export class ChromeSessions {
         profile: profile.id,
         generation: profile.generation,
         origins: [...selection.chromeOrigins],
+        siteScope: selection.chromeSiteScope ?? "approved",
         run: null,
         authorityRun: run,
         begun: false,
@@ -188,6 +194,7 @@ export class ChromeSessions {
           name: name.slice(0, 75),
           agent,
           origins: t.origins,
+          siteScope: t.siteScope,
           protected: this.protected,
         })) as { paused?: boolean; tabs?: string[] };
         if (resumed.paused) {
@@ -204,7 +211,7 @@ export class ChromeSessions {
       }
       if (t.paused)
         throw new Error(
-          "Chrome is paused for private human control. Resume explicitly in Jelly.",
+          "Connected Chrome is paused for private human control. The user can return control in Jelly Settings → Browser target → This agent’s pinned Chrome session → Resume (or the pending Chrome sign-in card). Do not direct them to a managed browser viewer or Computer panel; chat messages cannot resume Chrome.",
         );
     };
     return {
@@ -344,7 +351,8 @@ export class ChromeSessions {
     return pending;
   }
   private url(t: Task, value: unknown) {
-    if (!t.origins.includes(chromeOrigin(value, this.protected)))
+    const origin = chromeOrigin(value, this.protected, false, t.siteScope);
+    if (t.siteScope !== "internet" && !t.origins.includes(origin))
       throw new Error("Website is outside the approved Chrome scope.");
   }
   private async call(
@@ -408,6 +416,7 @@ export class ChromeSessions {
             tabs: [...t.tabs],
             handoff: t.handoff,
             origins: t.origins,
+            siteScope: t.siteScope,
           }
         : null,
     };

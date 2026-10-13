@@ -1,3 +1,4 @@
+import { fixtureBrowserPath } from "./fixtures/browser";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -397,7 +398,7 @@ test("real browser cannot expose or replace accepted Jelly control cookie via pa
   });
   cleanups.push(() => attacker.stop(true));
   const browser = await chromium.launch({
-    executablePath: process.env.CHROME_BIN ?? "/usr/bin/google-chrome",
+    executablePath: fixtureBrowserPath(process.env.CHROME_BIN),
     headless: true,
     args: [
       "--no-sandbox",
@@ -656,7 +657,7 @@ test("real HTTPS browser uses host-prefixed control credentials, retires legacy 
   });
   cleanups.push(() => attacker.stop(true));
   const browser = await chromium.launch({
-    executablePath: process.env.CHROME_BIN ?? "/usr/bin/google-chrome",
+    executablePath: fixtureBrowserPath(process.env.CHROME_BIN),
     headless: true,
     args: [
       "--no-sandbox",

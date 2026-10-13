@@ -3,11 +3,12 @@ import { ChevronRight, Check } from "lucide-react";
 import { Modal } from "./Modal";
 import { Connections } from "./Connections";
 import { ChromeConnection } from "./ChromeConnection";
+import { DesktopConnection } from "./DesktopConnection";
 import { McpConnections } from "./McpConnections";
 import { api } from "./api";
 import {
   MODEL_OPTIONS,
-  ULTRAFAST_NOTICE,
+  modelSpeedNotice,
   EFFORT_OPTIONS,
   type ModelId,
   type Effort,
@@ -103,6 +104,7 @@ export function Settings({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [detailDirty, setDetailDirty] = useState(false);
+  const speedNotice = modelSpeedNotice(model);
   const dirty =
     browserBackend !== (data.config.browserBackend ?? "agent-browser") ||
     mode !== data.config.mode ||
@@ -176,6 +178,7 @@ export function Settings({
       }
     >
       {page === "Browser target" && <ChromeConnection data={data} refresh={refresh} />}
+      {page === "Native Mac desktop" && <DesktopConnection data={data} refresh={refresh} onDirty={setDetailDirty} onBusy={setBusy} />}
       {page === "Browser controller" && (
         <>
           <Choices
@@ -259,6 +262,7 @@ export function Settings({
                 label="MCP connections"
                 onClick={() => setPage("MCP connections")}
               />
+              <SettingsRow label="Native Mac desktop" value="Peekaboo · opt-in" onClick={() => setPage("Native Mac desktop")} />
             </div>
           </section>
           <section className="settings-section">
@@ -298,8 +302,8 @@ export function Settings({
             options={MODEL_OPTIONS}
             onChange={setModel}
           />
-          {model === "gpt-6-astra-ultrafast" && (
-            <p className="settings-footnote">{ULTRAFAST_NOTICE}</p>
+          {speedNotice && (
+            <p className="settings-footnote">{speedNotice}</p>
           )}
         </>
       )}

@@ -23,6 +23,7 @@ import { Harness } from "./harness";
 import { HttpError, JellyService } from "./service";
 import type { AppsAdapter } from "./apps-runtime";
 import { APP_ICON_MAX_BYTES } from "./apps-icons";
+import type { DesktopSessions } from "./desktop-sessions";
 export interface AppOptions {
   dataDir: string;
   sudoExecutor?: SudoExecutor;
@@ -35,6 +36,8 @@ export interface AppOptions {
   allowedOrigins?: string[];
   staticDir?: string;
   appsAdapter?: AppsAdapter;
+  appsOptions?: NonNullable<ConstructorParameters<typeof JellyService>[2]>["appsOptions"];
+  desktopOptions?: Omit<ConstructorParameters<typeof DesktopSessions>[1], "isRunActive" | "notify" | "canAdmit">;
 }
 const json = (value: unknown, status = 200) =>
   Response.json(value, {
@@ -338,22 +341,51 @@ export async function startApp(options: AppOptions) {
               }
               throw new HttpError(404, "Apps API route not found.");
             }
+            if (url.pathname === "/api/desktop" && req.method === "GET")
+              return json(service.desktopStatus());
+            if (url.pathname.startsWith("/api/desktop/") && req.method === "POST") {
+              const operation = url.pathname.slice("/api/desktop/".length);
+              const input = await body(req);
+              if (operation === "settings") return json(await service.desktop.configure(input));
+              if (operation === "connect") { await service.desktop.connect(); return json(service.desktopStatus()); }
+              if (operation === "pause") { await service.pauseDesktopForPrivacy(); return json(service.desktopStatus()); }
+              if (operation === "stop") { await service.desktop.stop(); return json(service.desktopStatus()); }
+              if (operation === "handback") return json(await service.finishDesktopPrivacy());
+              if (operation === "resume" || operation === "foreground") {
+                const agentId = text(input.agentId, "Agent ID", 100);
+                const runId = text(input.runId, "Run ID", 100);
+                if (!store.agent(agentId)) throw new HttpError(404, "Agent not found.");
+                if (operation === "resume")
+                  return json(await service.resumeDesktop(agentId, runId, typeof input.handoffId === "string" ? input.handoffId : undefined));
+                if (typeof input.durationMs !== "number" || !Number.isInteger(input.durationMs) ||
+                    input.durationMs < 1000 || input.durationMs > 60000)
+                  throw new HttpError(400, "Foreground grants last 1–60 seconds.");
+                if (service.desktopStatus().handoff || service.desktopStatus().browserPrivate)
+                  throw new HttpError(409, "Private control blocks foreground grants.");
+                await service.desktop.grantForeground(agentId, runId, input.durationMs);
+                return json(service.desktopStatus());
+              }
+              throw new HttpError(404, "Desktop control route not found.");
+            }
             if (url.pathname === "/api/chrome" && req.method === "GET") {
               controls.require(req, false);
-              return json(service.chrome.state(url.searchParams.get("agentId") ?? undefined));
+              return json(service.chromeStatus(url.searchParams.get("agentId") ?? undefined));
             }
             if (url.pathname.startsWith("/api/chrome/") && req.method === "POST") {
               controls.require(req);
               const operation = url.pathname.slice("/api/chrome/".length);
               const input = await body(req);
-              if (operation === "settings") return json(service.setConfig({ browserTarget: input.browserTarget as "managed" | "chrome", chromeProfile: input.chromeProfile as string, chromeOrigins: input.chromeOrigins as string[] }));
+              if (operation === "settings") return json(service.setConfig({ browserTarget: input.browserTarget as "managed" | "chrome", chromeProfile: input.chromeProfile as string, chromeOrigins: input.chromeOrigins as string[], chromeSiteScope: input.chromeSiteScope as "approved" | "internet" | undefined }));
               const agentId = text(input.agentId, "Agent ID", 100);
               if (!store.agent(agentId)) throw new HttpError(404, "Agent not found.");
               if (operation === "close" && ["running", "waiting"].includes(store.agent(agentId)!.status)) throw new HttpError(409, "Stop or finish the run before resetting its pinned browser target.");
+              if (["pause", "focus", "handoff"].includes(operation)) await service.pauseDesktopForPrivacy(`browser:${agentId}`);
+              if (operation === "resume") service.assertBrowserHandbackAllowed();
               const handoff = await service.chrome.control(agentId, operation, typeof input.pageId === "string" ? input.pageId : undefined);
               if (operation === "close") service.browsers.releasePin(agentId);
               if (handoff && store.intervention(handoff)?.status === "pending") service.interventions.completeLogin(handoff);
-              return json(service.chrome.state(agentId));
+              if (operation === "resume") await service.finishBrowserPrivacy(agentId);
+              return json(service.chromeStatus(agentId));
             }
             if (req.method === "GET" && url.pathname === "/api/computer") {
               const session = controls.require(req, false);
@@ -381,8 +413,10 @@ export async function startApp(options: AppOptions) {
                 await computer.ensure();
                 return json(computer.state(session.id));
               }
-              if (action === "take")
+              if (action === "take") {
+                await service.pauseDesktopForPrivacy(`browser:${agentId}`);
                 return json(await computer.take(session.id));
+              }
               if (action === "recover") {
                 const input = await body(req);
                 if (input.confirm !== "discard-private-desktop")
@@ -394,9 +428,11 @@ export async function startApp(options: AppOptions) {
                 return json(await recovery);
               }
               if (action === "release") {
+                service.assertBrowserHandbackAllowed();
                 const id = await computer.release(session.id);
                 if (id && store.intervention(id)?.status === "pending")
                   service.interventions.completeLogin(id);
+                await service.finishBrowserPrivacy(agentId);
                 return json(computer.state(session.id));
               }
               if (action === "clipboard") {
@@ -409,6 +445,7 @@ export async function startApp(options: AppOptions) {
                 const input = await body(req);
                 if (input.mode !== "view" && input.mode !== "control")
                   throw new HttpError(400, "Invalid access mode.");
+                if (input.mode === "control") await service.pauseDesktopForPrivacy(`browser:${agentId}`);
                 return json(
                   await computer.ticket(session.id, input.mode),
                 );

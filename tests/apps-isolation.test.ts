@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
+import * as fsPromises from "node:fs/promises";
 import {
   chmodSync,
   existsSync,
@@ -98,6 +99,51 @@ test("socket preparation never follows/deletes regular files or socket symlinks"
     "owned socket",
   );
   expect(readFileSync(target, "utf8")).toBe("untouched");
+});
+test("owned socket validation tolerates unavailable leaf realpath but still refuses socket symlinks", async () => {
+  const f = fixture();
+  await verifySocketParent(f.socket, f.owner, true);
+  const original = fsPromises.realpath;
+  const leafUnsupported = spyOn(fsPromises, "realpath").mockImplementation(
+    (async (path: any, options: any) => {
+      if (path === f.socket)
+        throw Object.assign(new Error("socket realpath unsupported"), {
+          code: "EOPNOTSUPP",
+        });
+      return original(path, options);
+    }) as typeof fsPromises.realpath,
+  );
+  const server = Bun.serve({
+    unix: f.socket,
+    fetch: () => new Response("fixture"),
+  });
+  try {
+    expect(await validateRuntimeSocket(f.socket, f.owner)).toBe(true);
+    expect(leafUnsupported.mock.calls.some(([path]) => path === f.socket)).toBe(
+      false,
+    );
+  } finally {
+    leafUnsupported.mockRestore();
+    server.stop(true);
+  }
+  if (existsSync(f.socket)) rmSync(f.socket);
+  const target = join(f.dir, "target.sock");
+  const other = Bun.serve({
+    unix: target,
+    fetch: () => new Response("untouched"),
+  });
+  try {
+    symlinkSync(target, f.socket);
+    await expect(validateRuntimeSocket(f.socket, f.owner)).rejects.toThrow(
+      "owned socket",
+    );
+    await expect(prepareRuntimeSocket(f.socket, f.owner)).rejects.toThrow(
+      "owned socket",
+    );
+    expect(existsSync(target)).toBe(true);
+  } finally {
+    other.stop(true);
+  }
 });
 test("exact Unix socket health works with Bun and Node HTTP APIs, never follows redirects", async () => {
   const f = fixture();

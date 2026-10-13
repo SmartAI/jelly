@@ -101,11 +101,9 @@ export async function validateRuntimeSocket(
   await verifySocketParent(path, owner);
   try {
     const info = await lstat(path);
-    if (
-      !info.isSocket() ||
-      info.uid !== process.getuid?.() ||
-      (await realpath(path)) !== path
-    )
+    // The parent was verified canonical above; lstat rejects a symlink leaf.
+    // realpath(socket) is not portable (Bun/macOS can return EOPNOTSUPP).
+    if (!info.isSocket() || info.uid !== process.getuid?.())
       throw new Error("App runtime socket is not an owned socket.");
     return true;
   } catch (error) {

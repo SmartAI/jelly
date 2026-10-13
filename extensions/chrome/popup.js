@@ -53,7 +53,7 @@ async function action(action) {
     list.replaceChildren();
     for (const task of result?.sessions ?? []) {
       const li = document.createElement("li");
-      li.textContent = `${task.name}: ${task.failed ? "Pause failed—do not enter credentials" : task.pausing ? "Pausing—do not enter credentials yet" : task.paused ? "paused" : "working"}, ${task.tabs} tab(s)`;
+      li.textContent = `${task.name}: ${task.failed ? "Pause failed—do not enter credentials" : task.pausing ? "Pausing—do not enter credentials yet" : task.paused ? "paused" : "working"}, ${task.tabs} tab(s) · ${task.siteScope === "internet" ? "Unrestricted internet" : "Approved sites"}`;
       list.append(li);
     }
     choices(

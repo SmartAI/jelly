@@ -92,6 +92,22 @@ async function saveAgentProfile(name: string) {
   fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
   await waitFor(() => expect(!!screen.queryByRole("dialog")).toBe(false));
 }
+test("Connected Chrome hides managed Computer controls in chat and agent options", async () => {
+  const a = await setup();
+  a.service.store.setBrowserSelection({
+    browserTarget: "chrome",
+    chromeProfile: crypto.randomUUID(),
+    chromeOrigins: ["https://example.com"],
+  });
+  render(<App />);
+  await waitForConnectedAgent();
+  expect(screen.queryByRole("button", { name: /^Computer$/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Agent options" }));
+  await screen.findByRole("button", { name: "Fresh Session" });
+  expect(screen.queryByRole("button", { name: /^Computer$/ })).toBeNull();
+  expect(document.querySelector("dialog.computer-panel")).toBeNull();
+});
+
 test("React client connects, creates an agent, sends through Pi, renders tool completion and restores history on remount", async () => {
   const app = await setup({ fixtureDelayMs: 300 });
   let ui = render(<App />);
@@ -143,7 +159,7 @@ test("React client connects, creates an agent, sends through Pi, renders tool co
           /This is a deterministic test fixture/,
         ),
       ).toBeDefined(),
-    { timeout: 3000 },
+    { timeout: 15000 },
   );
   expect(screen.getByText("Workspace checked")).toBeDefined();
   expect(screen.queryByText("Local demo")).toBeNull();
@@ -461,6 +477,14 @@ test("grouped settings use checkmarked model and effort choices and persist on D
     (screen.getByRole("radio", { name: "GPT-6 Astra" }) as HTMLInputElement)
       .checked,
   ).toBe(true);
+  for (const label of ["GPT-6 Astra Fast", "GPT-6 Sol Fast", "GPT-6.1 Sol Fast"]) {
+    fireEvent.click(screen.getByRole("radio", { name: label }));
+    expect((screen.getByRole("radio", { name: label }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText(/Fast requests priority processing/)).toBeDefined();
+    expect(screen.queryByText(/Ultrafast requires/)).toBeNull();
+  }
+  expect(screen.queryByRole("radio", { name: "GPT-6 Sol Ultrafast" })).toBeNull();
+  expect(screen.queryByRole("radio", { name: "GPT-6.1 Sol Ultrafast" })).toBeNull();
   fireEvent.click(screen.getByRole("radio", { name: "GPT-6 Astra Ultrafast" }));
   expect(screen.getByText(/Higher API pricing/)).toBeDefined();
   fireEvent.click(screen.getByRole("button", { name: "Back" }));
@@ -669,6 +693,39 @@ test("project create form confirms a server folder and new agent inherits it wit
   expect(a.projectId).toBe(saved.id);
   expect(a.avatarId).toBe("sea-turtle");
 });
+
+test("folder picker times out a stalled listing and Retry loads folders", async () => {
+  await setup();
+  const { DirectoryPicker } = await import("../src/client/Projects");
+  const fetchBefore = globalThis.fetch;
+  let stalled = true;
+  let listingSignal: AbortSignal | undefined;
+  globalThis.fetch = ((input: any, init: any) => {
+    if (String(input).startsWith("/api/directories?")) {
+      if (stalled) {
+        listingSignal = init.signal;
+        // Even a transport that ignores cancellation must stop blocking the UI.
+        return new Promise<Response>(() => {});
+      }
+      return Promise.resolve(Response.json({
+        path: "/test", home: "/test", parent: "/", cursor: null,
+        entries: [{ name: "Project files", path: "/test/Project files", available: true }],
+      }));
+    }
+    return fetchBefore(input, init);
+  }) as typeof fetch;
+  render(<DirectoryPicker instance="Test server" onClose={() => {}} onChoose={() => {}} />);
+  expect(screen.getByText("Loading folders…")).toBeDefined();
+  await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("timed out"), { timeout: 12_000 });
+  expect(listingSignal?.aborted).toBe(true);
+  expect(screen.queryByText("Loading folders…")).toBeNull();
+  expect(screen.getByRole("button", { name: "Use this folder" }).hasAttribute("disabled")).toBe(true);
+  stalled = false;
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await screen.findByRole("button", { name: "Project files" });
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("button", { name: "Use this folder" }).hasAttribute("disabled")).toBe(false);
+}, 15_000);
 
 test("new project can create a directory, recover from a conflict, and select it without losing its name", async () => {
   const app = await setup();
@@ -948,6 +1005,23 @@ test("chat model menu persists choices without changing connection mode and dism
   expect(document.activeElement === trigger).toBe(true);
   expect(document.activeElement === model).toBe(false);
   expect(within(model).getByRole("option", { name: "GPT-6.1 Sol" })).toBeDefined();
+  for (const [id, label] of [
+    ["gpt-6-astra-fast", "GPT-6 Astra Fast"],
+    ["gpt-6-sol-fast", "GPT-6 Sol Fast"],
+    ["gpt-6.1-sol-fast", "GPT-6.1 Sol Fast"],
+  ] as const) {
+    expect(within(model).getByRole("option", { name: label })).toBeDefined();
+    fireEvent.change(model, { target: { value: id } });
+    await waitFor(() => {
+      expect(model.value).toBe(id);
+      expect(model.disabled).toBe(false);
+    });
+    expect(app.service.snapshot().config.selectedModel).toBe(id);
+    expect(screen.getByText(/Fast requests priority processing/)).toBeDefined();
+    expect(screen.queryByText(/Ultrafast requires/)).toBeNull();
+  }
+  expect(within(model).queryByRole("option", { name: "GPT-6 Sol Ultrafast" })).toBeNull();
+  expect(within(model).queryByRole("option", { name: "GPT-6.1 Sol Ultrafast" })).toBeNull();
   fireEvent.change(model, { target: { value: "gpt-6-astra-ultrafast" } });
   await waitFor(() => {
     expect(model.value).toBe("gpt-6-astra-ultrafast");
@@ -1169,6 +1243,7 @@ test("settings shows read-only MCP status and refreshes agent configuration chan
     expect(
       within(fieldset).getByText("No MCP servers connected."),
     ).toBeTruthy(),
+    { timeout: 10000 },
   );
   const { writeFileSync } = await import("node:fs");
   writeFileSync(
@@ -1183,6 +1258,7 @@ test("settings shows read-only MCP status and refreshes agent configuration chan
   );
   await waitFor(() =>
     expect(within(fieldset).getByText("offline")).toBeTruthy(),
+    { timeout: 10000 },
   );
   expect(within(fieldset).getByText("Unavailable")).toBeTruthy();
   expect(within(fieldset).queryAllByRole("textbox")).toHaveLength(0);

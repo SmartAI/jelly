@@ -1,7 +1,7 @@
 # Connected Chrome — shared-profile local implementation
 
 **Connected Chrome** is a separate browser target, not a managed controller.
-Choose one explicitly connected profile and site scope **globally for every
+Choose one explicitly connected profile and site access **globally for every
 persistent Jelly agent**. Agents use separate task groups and exclusive tab
 capabilities but share that profile's cookies and signed-in accounts. Managed
 Playwright/AgentBrowser profiles, SOCKS egress and VNC remain available and
@@ -14,7 +14,7 @@ complete**. See remaining rollout gates below. Installing into the user's normal
 profile and activating the global setting are separate, explicit operator steps
 after review; tests never modify the normal profile or live Jelly settings.
 
-## Setup (Linux, same OS user and machine)
+## Setup (Linux or macOS, same OS user and machine)
 
 1. Start the intended Jelly instance. It creates private
    `<dataDir>/chrome-bridge/` (0700), `pairing.json` and `bridge.sock` (0600).
@@ -27,6 +27,7 @@ after review; tests never modify the normal profile or live Jelly settings.
    **`mikadpfmkipiafkemjplldmfckomphcf`**, independent of the checkout/build path.
    The key was generated for Jelly; it is not OpenAI's identity. No private
    signing key is committed or retained and this is not a Web Store signature.
+
 3. Install Jelly's separate native host, explicitly selecting the instance and
    Chrome **user-data root** (the directory containing `Default`, not `Default`):
 
@@ -36,7 +37,15 @@ after review; tests never modify the normal profile or live Jelly settings.
    ```
 
    For the normal Linux installation the latter is ordinarily
-   `~/.config/google-chrome`. For tests always use a temporary path. The fixed
+   `~/.config/google-chrome`. On macOS use
+   `~/Library/Application Support/Google/Chrome` (quote the absolute path):
+
+   ```sh
+   bun run chrome:install-host --data-dir /absolute/jelly/data \
+     --chrome-config '/Users/your-user/Library/Application Support/Google/Chrome'
+   ```
+
+   For tests always use a temporary path. The fixed
    development extension ID is the installer's default; `--extension-id ID` is
    available for a separately reviewed build. Installation creates only
    `NativeMessagingHosts/org.jelly.browser.json` and this instance's private
@@ -44,19 +53,30 @@ after review; tests never modify the normal profile or live Jelly settings.
    manifest and preserves unrelated hosts. Moving Bun/repository requires
    reinstalling the wrapper. One host registration chooses one Jelly instance
    per Chrome user-data root; use separate roots for separate instances.
+
 4. Open the Jelly extension popup and click **Connect to installed Jelly
    instance**. Compare its instance ID and persistent profile UUID with Jelly.
 5. In **Settings → Browser target**, choose Connected Chrome, the exact connected
-   profile, and exact HTTPS origins (one per line), then **Save browser target
+   profile, and **Site access**. Choose **Approved sites only** with exact HTTPS
+   origins (one per line), or **Unrestricted internet (HTTP and HTTPS)** with no
+   origin list, then **Save browser target
    and site scope**. This is a global setting, not per-agent setup. Every
    persistent agent's next unpinned browser session uses it.
 
-   Scope is explicit: no wildcards, HTTP, literal IPs, local aliases, Tailscale
-   hosts, internal schemes or Jelly/control origins. Approve required asset and
-   identity-provider origins deliberately, not with blanket permissions. A
+   Approved-site scope accepts no wildcards, HTTP or literal IPs. Approve required
+   asset and identity-provider origins deliberately. Unrestricted internet allows
+   public HTTP/HTTPS domains and public IP addresses, redirects, assets and frames
+   without an origin allowlist; this exposes the profile's signed-in public sites
+   to every persistent agent. Both modes reject credentials in URLs, local/private
+   addresses and aliases, Tailscale hosts, internal schemes and Jelly/control
+   hosts across ports. Per-tab network rules block known local/control hosts even
+   for redirects and assets in unrestricted mode. Public names resolving to private
+   addresses remain a DNS-rebinding risk, not an egress-isolation guarantee. A
    disconnected selected profile never falls back to another profile or managed
    browser. Already allocated sessions keep their target/profile/sites; stop the
-   agent and **Close / Reset pinned target** to change those choices.
+   agent and **Close / Reset pinned target** to change those choices, including
+   switching between approved-site and unrestricted access. Existing settings
+   without a site-access mode retain approved-site behavior.
 
 No Chrome restart, remote-debugging port, profile copy or cookie migration is
 needed. Browser-on-laptop/Jelly-on-server needs a separate authenticated remote
@@ -142,8 +162,10 @@ After the complete Jelly run settles and children are disposed:
 - Deliverables (`browser_keep_tab`, default `mark: "deliverable"`) remain open
   without a lease/debugger and with task restrictions removed.
 - Agent tabs marked `handoff` remain reserved and paused across follow-up runs.
-  Explicit local/user pause also preserves temporary agent tabs if the run settles
-  before resume, so settlement cannot close a tab during private human work.
+  All private-control pauses, including protective pauses after debugger conflicts
+  or tab replacement, preserve temporary agent tabs if the run settles before
+  resume, so settlement cannot close a tab during private human work. The human
+  can keep using the open tab while agent observations and input stay revoked.
   Resuming restores those implicitly preserved tabs' normal temporary cleanup.
   The same task/profile persists but the next run gets new run authority. Start
   a follow-up browser run, then explicitly **Resume**; old-run tools are rejected.
@@ -177,7 +199,7 @@ old per-tab rule targets until cleanup rather than assuming they are safe.
 
 ## Security boundary and remaining rollout gates
 
-Protocol v3 has schema-validated methods/identities, pairing grant, extension ID,
+Protocol v4 has schema-validated methods/identities, explicit pinned site-access mode, pairing grant, extension ID,
 instance/profile/connection generation binding, bounded pending requests and event
 rates. Pause progress/failure/acknowledgement events also bind to the current run.
 Older protocol versions are rejected: reload the unpacked extension when idle
@@ -190,14 +212,16 @@ content. Owner-only sockets/configuration are an OS-user boundary, not a sandbox
 against unrestricted same-user shell/filesystem access.
 
 Permissions: nativeMessaging, debugger, tabs, tabGroups, storage, scripting,
-webNavigation, declarativeNetRequest, HTTPS hosts. Packaged isolated-world scripts
+webNavigation, declarativeNetRequest, HTTP and HTTPS hosts. Packaged isolated-world scripts
 and document/lease/site checks implement observations/input, including OOPIFs;
 CDP is internal for debugger lifecycle/screenshots. There are no page/content-
 script control RPCs, arbitrary eval/CDP tools, cookie/password/autofill/browser-
 storage reads, history/bookmarks tools or network response bodies.
 
-Agent tab DNR restrictions are installed before first navigation and block
-unapproved main documents, redirects and subresources. This is **not managed
+Agent tab DNR restrictions are installed before first navigation. Approved-site
+mode blocks unapproved main documents, redirects and subresources; unrestricted
+mode blocks known local/private and Jelly/control destinations across those
+request types. This is **not managed
 SOCKS egress isolation**. Outstanding signed-in rollout risks include:
 
 - Pre-notification popup traffic and service-worker/background requests without
@@ -220,7 +244,7 @@ SOCKS egress isolation**. Outstanding signed-in rollout risks include:
 
 Separate deferred work: reviewed upload/download artifact protocol and chunking,
 remote authenticated transport, side-panel chat/cursor overlays, automatic
-updates, cross-platform installation and public Web Store distribution/signing.
+updates, Windows installation and public Web Store distribution/signing.
 No normal-profile cookie/login settings are changed. No claim is made that this
 extension prevents every site-initiated download.
 
@@ -232,7 +256,8 @@ Testing** via extension → native host → private socket. It uses only tempora
 profiles, temporary host installs and local fixture sites. Playwright's private
 pipe provides fixture/human inspection and worker termination, not Jelly browser
 actions. `JELLY_EXTENSION_BROWSER_PATH` can select a compatible executable;
-Xvfb or DISPLAY is required. Only fixture builds allow loopback HTTP.
+Xvfb or DISPLAY is required on Linux; macOS uses its normal headed display.
+Only fixture builds bypass local-address guards to allow loopback fixture sites.
 
 The live suite covers simultaneous agents and profiles/instances, foreign tab
 and reference rejection, user grants/release preserving groups, group deletion,
